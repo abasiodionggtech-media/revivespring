@@ -1,0 +1,106 @@
+// This is your Prisma schema file
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── User ─────────────────────────────────────────────────────────────────────
+model User {
+  id                 String    @id @default(uuid())
+  email              String    @unique
+  passwordHash       String
+  fullName           String?   @map("full_name")
+  subscriptionStatus String    @default("free")
+  salvationDate      String?
+  testimony          String?
+  language           String    @default("en")
+  isEmailVerified    Boolean   @default(false)
+  otpCode            String?
+  otpExpiresAt       DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  prayers     Prayer[]
+  journals    JournalEntry[]
+  dailyGoals  DailyGoal[]
+  analytics   Analytics?
+
+  @@map("users")
+}
+
+// ─── Prayer ───────────────────────────────────────────────────────────────────
+model Prayer {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  mood           String
+  encouragement  String?
+  bibleVerse     String?  @map("bible_verse")
+  bibleReference String?  @map("bible_reference")
+  prayerText     String   @map("prayer_text")
+  actionStep     String?  @map("action_step")
+  language       String   @default("en")
+  isSaved        Boolean  @default(false) @map("is_saved")
+  createdDate    String?  @map("created_date")
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("prayers")
+}
+
+// ─── Journal Entry ────────────────────────────────────────────────────────────
+model JournalEntry {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  title       String
+  content     String
+  mood        String?
+  status      String   @default("active")
+  language    String   @default("en")
+  tags        String[] @default([])
+  createdDate String?  @map("created_date")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("journal_entries")
+}
+
+// ─── Daily Goal ───────────────────────────────────────────────────────────────
+model DailyGoal {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  text      String
+  completed Boolean  @default(false)
+  date      String
+  language  String   @default("en")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("daily_goals")
+}
+
+// ─── Analytics ────────────────────────────────────────────────────────────────
+model Analytics {
+  id             String   @id @default(uuid())
+  userId         String   @unique @map("user_id")
+  totalPrayers   Int      @default(0) @map("total_prayers")
+  answeredPrayers Int     @default(0) @map("answered_prayers")
+  currentStreak  Int      @default(0) @map("current_streak")
+  longestStreak  Int      @default(0) @map("longest_streak")
+  lastActiveDate String?  @map("last_active_date")
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("analytics")
+}
