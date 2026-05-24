@@ -1,0 +1,51 @@
+version: '3.9'
+
+services:
+  # ─── PostgreSQL ─────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: reviveme_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: reviveme_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── ReviveMe API ───────────────────────────────────────────────────────────
+  api:
+    build: .
+    container_name: reviveme_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:password@db:5432/reviveme_db
+      JWT_SECRET: change_this_secret_in_production_min_32_chars
+      JWT_EXPIRES_IN: 30d
+      PORT: 3000
+      NODE_ENV: development
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: 587
+      SMTP_USER: your_email@gmail.com
+      SMTP_PASS: your_app_password
+      EMAIL_FROM: "ReviveMe <noreply@reviveme.app>"
+      ALLOWED_ORIGINS: http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./src:/app/src
+    command: >
+      sh -c "npx prisma migrate deploy && node src/index.js"
+
+volumes:
+  pgdata:
