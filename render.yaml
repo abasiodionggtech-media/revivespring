@@ -3,7 +3,7 @@ services:
     name: reviveme-backend
     env: node
     plan: standard
-    buildCommand: npm install && npm run generate && npm run migrate:deploy
+    buildCommand: npm install && npm run generate
     startCommand: npm start
     envVars:
       - key: NODE_ENV
