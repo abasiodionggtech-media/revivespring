@@ -12,6 +12,7 @@ const journalRoutes   = require('./routes/journal');
 const goalRoutes      = require('./routes/goals');
 const analyticsRoutes = require('./routes/analytics');
 const { authenticate } = require('./middleware/auth');
+const prisma = require('./config/prisma');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -87,20 +88,37 @@ app.use((req, res) => {
 app.use((err, req, res, _next) => {
   const id = req && req.id ? req.id : 'no-id';
   console.error(`[ERROR][${id}]`, err.stack || err);
+
+  // Prisma errors often contain useful code/meta for debugging
+  if (err && err.name === 'PrismaClientKnownRequestError') {
+    console.error(`[PRISMA][${id}] code=${err.code} meta=${JSON.stringify(err.meta)}`);
+  }
+
   const status = err.status || 500;
+  const safeMessage = process.env.NODE_ENV === 'production' ? 'Internal server error.' : err.message;
   res.status(status).json({
-    message: process.env.NODE_ENV === 'production'
-      ? 'Internal server error.'
-      : err.message,
+    message: safeMessage,
     requestId: id,
+    // Expose Prisma code in non-production for easier debugging
+    prismaCode: (process.env.NODE_ENV === 'production' ? undefined : (err && err.code) || undefined),
   });
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✝  ReviveMe API running on port ${PORT}`);
-  console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`   Database: ${process.env.DATABASE_URL ? '✓ Connected' : '✗ DATABASE_URL missing!'}`);
-});
+(async () => {
+  try {
+    await prisma.$connect();
+    console.log('✅ Prisma connected to the database.');
+  } catch (err) {
+    console.error('[DB][ERROR] Could not connect to the database at startup:', err.message || err);
+    console.error('Make sure DATABASE_URL is set and migrations have been applied (run `npm run migrate:deploy`).');
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`✝  ReviveMe API running on port ${PORT}`);
+    console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`   Database URL present: ${process.env.DATABASE_URL ? 'yes' : 'no'}`);
+  });
+})();
 
 module.exports = app;
