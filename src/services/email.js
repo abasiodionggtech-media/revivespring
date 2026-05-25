@@ -8,7 +8,26 @@ const transporter = nodemailer.createTransport({
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  connectionTimeout: 7000,
+  greetingTimeout: 7000,
+  socketTimeout: 10000,
 });
+
+function timeoutPromise(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Email send timeout')), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 async function sendOtpEmail(email, otp, lang = 'en') {
   const isEn = lang !== 'fr';
@@ -43,12 +62,15 @@ async function sendOtpEmail(email, otp, lang = 'en') {
   </body>
   </html>`;
 
-  await transporter.sendMail({
-    from: process.env.EMAIL_FROM || 'ReviveMe <noreply@reviveme.app>',
-    to: email,
-    subject,
-    html,
-  });
+  await timeoutPromise(
+    transporter.sendMail({
+      from: process.env.EMAIL_FROM || 'ReviveMe <noreply@reviveme.app>',
+      to: email,
+      subject,
+      html,
+    }),
+    10000,
+  );
 }
 
 module.exports = { sendOtpEmail };

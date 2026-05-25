@@ -34,6 +34,14 @@ async function safeSendOtpEmail(email, otp, lang = 'en') {
   }
 }
 
+function fireAndForgetOtpEmail(email, otp, lang = 'en') {
+  safeSendOtpEmail(email, otp, lang).then((sent) => {
+    if (!sent) {
+      console.warn(`[EMAIL] OTP was not sent to ${email}. Continuing registration without blocking.`);
+    }
+  });
+}
+
 function handleValidation(req, res) {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -94,12 +102,10 @@ router.post(
       // Create analytics row
       await prisma.analytics.create({ data: { userId: user.id } });
 
-      const emailSent = await safeSendOtpEmail(email, otp, user.language);
+      fireAndForgetOtpEmail(email, otp, user.language);
 
       res.status(201).json({
-        message: emailSent
-          ? 'Account created. Please verify your email.'
-          : 'Account created. Verification email could not be sent. Please contact support.',
+        message: 'Account created. Please verify via email when available.',
         token: signToken(user.id),
         user: safeUser(user),
       });
