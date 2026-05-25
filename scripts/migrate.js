@@ -4,25 +4,33 @@
  * Runs automatically when the app starts.
  */
 const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 
 async function runMigrations() {
   console.log('[MIGRATE] Starting database migrations...');
-  
+  const migrationsPath = path.resolve(__dirname, '../prisma/migrations');
+  const useMigrateDeploy = fs.existsSync(migrationsPath);
+
   try {
-    // Run Prisma migrations deploy
-    console.log('[MIGRATE] Running: npx prisma migrate deploy');
-    execSync('npx prisma migrate deploy', {
-      stdio: 'inherit',
-      env: { ...process.env }
-    });
-    console.log('✅ [MIGRATE] Migrations completed successfully');
+    if (useMigrateDeploy) {
+      console.log('[MIGRATE] Found Prisma migrations folder. Running: npx prisma migrate deploy');
+      execSync('npx prisma migrate deploy', {
+        stdio: 'inherit',
+        env: { ...process.env }
+      });
+    } else {
+      console.log('[MIGRATE] No Prisma migrations folder found. Running: npx prisma db push --accept-data-loss');
+      execSync('npx prisma db push --accept-data-loss', {
+        stdio: 'inherit',
+        env: { ...process.env }
+      });
+    }
+    console.log('✅ [MIGRATE] Schema sync completed successfully');
     return true;
   } catch (error) {
-    console.error('[MIGRATE] Error running migrations:', error.message);
-    // Don't fail the app start — migrations might have been already applied
-    // or DB might be temporarily unavailable. The app will start but requests will fail
-    // with clearer Prisma errors if tables are missing.
-    console.warn('[MIGRATE] WARNING: Migrations may not have been applied. Check database connection.');
+    console.error('[MIGRATE] Error applying schema:', error.message);
+    console.warn('[MIGRATE] WARNING: Database schema may not have been created. Check DATABASE_URL and Prisma schema.');
     return false;
   }
 }
