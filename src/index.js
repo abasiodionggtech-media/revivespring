@@ -17,6 +17,9 @@ const prisma = require('./config/prisma');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust the proxy (Render uses a reverse proxy, otherwise rate limiter sees wrong client IPs)
+app.set('trust proxy', 1);
+
 // Request ID + basic request/response logging for easier debugging in logs
 app.use((req, res, next) => {
   const id = uuidv4();
