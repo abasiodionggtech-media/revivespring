@@ -24,6 +24,16 @@ function safeUser(user) {
   return safe;
 }
 
+async function safeSendOtpEmail(email, otp, lang = 'en') {
+  try {
+    await sendOtpEmail(email, otp, lang);
+    return true;
+  } catch (err) {
+    console.error('[EMAIL] Unable to send OTP email:', err);
+    return false;
+  }
+}
+
 function handleValidation(req, res) {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -58,8 +68,12 @@ router.post(
               otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
             },
           });
-          await sendOtpEmail(email, otp, existing.language);
-          return res.status(400).json({ message: 'Email not verified. A new code has been sent.' });
+          const emailSent = await safeSendOtpEmail(email, otp, existing.language);
+          return res.status(400).json({
+            message: emailSent
+              ? 'Email not verified. A new code has been sent.'
+              : 'Email not verified. We could not send a new code. Please contact support.',
+          });
         }
         return res.status(409).json({ message: 'Email already in use.' });
       }
@@ -80,10 +94,12 @@ router.post(
       // Create analytics row
       await prisma.analytics.create({ data: { userId: user.id } });
 
-      await sendOtpEmail(email, otp, user.language);
+      const emailSent = await safeSendOtpEmail(email, otp, user.language);
 
       res.status(201).json({
-        message: 'Account created. Please verify your email.',
+        message: emailSent
+          ? 'Account created. Please verify your email.'
+          : 'Account created. Verification email could not be sent. Please contact support.',
         token: signToken(user.id),
         user: safeUser(user),
       });
@@ -125,9 +141,11 @@ router.post(
             otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
           },
         });
-        await sendOtpEmail(email, otp, user.language);
+        const emailSent = await safeSendOtpEmail(email, otp, user.language);
         return res.status(403).json({
-          message: 'Email not verified. A verification code has been sent.',
+          message: emailSent
+            ? 'Email not verified. A verification code has been sent.'
+            : 'Email not verified. We could not send your verification code. Please contact support.',
         });
       }
 
@@ -202,8 +220,12 @@ router.post(
           otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
         },
       });
-      await sendOtpEmail(email, otp, user.language);
-      res.json({ message: 'Verification code resent.' });
+      const emailSent = await safeSendOtpEmail(email, otp, user.language);
+      res.json({
+        message: emailSent
+          ? 'Verification code resent.'
+          : 'Verification code updated but email delivery failed. Please contact support.',
+      });
     } catch (err) {
       next(err);
     }

@@ -5,8 +5,11 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "build": "npm run generate",
+    "postinstall": "npm run generate",
     "dev": "nodemon src/index.js",
     "migrate": "npx prisma migrate dev",
+    "migrate:deploy": "npx prisma migrate deploy",
     "generate": "npx prisma generate",
     "seed": "node src/config/seed.js",
     "studio": "npx prisma studio"
