@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const { v4: uuidv4 } = require('uuid');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -14,6 +15,20 @@ const { authenticate } = require('./middleware/auth');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
+
+// Request ID + basic request/response logging for easier debugging in logs
+app.use((req, res, next) => {
+  const id = uuidv4();
+  req.id = id;
+  res.setHeader('X-Request-Id', id);
+  console.log(`[${id}] --> ${req.method} ${req.originalUrl}`);
+  const start = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    console.log(`[${id}] <-- ${res.statusCode} ${req.method} ${req.originalUrl} ${ms}ms`);
+  });
+  next();
+});
 
 // ─── Security ─────────────────────────────────────────────────────────────────
 app.use(helmet());
@@ -70,12 +85,14 @@ app.use((req, res) => {
 
 // ─── Global Error Handler ─────────────────────────────────────────────────────
 app.use((err, req, res, _next) => {
-  console.error('[ERROR]', err.message);
+  const id = req && req.id ? req.id : 'no-id';
+  console.error(`[ERROR][${id}]`, err.stack || err);
   const status = err.status || 500;
   res.status(status).json({
     message: process.env.NODE_ENV === 'production'
       ? 'Internal server error.'
       : err.message,
+    requestId: id,
   });
 });
 
