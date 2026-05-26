@@ -1,9 +1,10 @@
+// src/routes/auth.js
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const prisma = require('../config/prisma');
-const { sendOtpEmail } = require('../services/email');
+const { safeSendOtpEmail } = require('../services/email');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
@@ -24,24 +25,6 @@ function safeUser(user) {
   return safe;
 }
 
-async function safeSendOtpEmail(email, otp, lang = 'en') {
-  try {
-    await sendOtpEmail(email, otp, lang);
-    return true;
-  } catch (err) {
-    console.error('[EMAIL] Unable to send OTP email:', err);
-    return false;
-  }
-}
-
-function fireAndForgetOtpEmail(email, otp, lang = 'en') {
-  safeSendOtpEmail(email, otp, lang).then((sent) => {
-    if (!sent) {
-      console.warn(`[EMAIL] OTP was not sent to ${email}. Continuing registration without blocking.`);
-    }
-  });
-}
-
 function handleValidation(req, res) {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -52,6 +35,8 @@ function handleValidation(req, res) {
 }
 
 // ─── POST /api/auth/register ──────────────────────────────────────────────────
+// Creates account, fires OTP email in background (never blocks on email)
+// Returns 201 with token + user so Flutter can proceed to verify screen
 router.post(
   '/register',
   [
@@ -66,8 +51,8 @@ router.post(
 
       const existing = await prisma.user.findUnique({ where: { email } });
       if (existing) {
-        // If they exist but unverified, resend OTP
         if (!existing.isEmailVerified) {
+          // Already registered but not verified — resend OTP and return same response
           const otp = generateOtp();
           await prisma.user.update({
             where: { id: existing.id },
@@ -76,11 +61,13 @@ router.post(
               otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
             },
           });
-          const emailSent = await safeSendOtpEmail(email, otp, existing.language);
-          return res.status(400).json({
-            message: emailSent
-              ? 'Email not verified. A new code has been sent.'
-              : 'Email not verified. We could not send a new code. Please contact support.',
+          // Fire email in background — don't await
+          safeSendOtpEmail(email, otp, existing.language);
+          return res.status(201).json({
+            message: 'Account exists but email not verified. A new code has been sent.',
+            token: signToken(existing.id),
+            user: safeUser(existing),
+            requiresVerification: true,
           });
         }
         return res.status(409).json({ message: 'Email already in use.' });
@@ -99,66 +86,18 @@ router.post(
         },
       });
 
-      // Create analytics row
+      // Create analytics row for new user
       await prisma.analytics.create({ data: { userId: user.id } });
 
-      fireAndForgetOtpEmail(email, otp, user.language);
+      // Fire OTP email in background — NEVER block registration on email
+      safeSendOtpEmail(email, otp, user.language);
 
-      res.status(201).json({
-        message: 'Account created. Please verify via email when available.',
+      // Return immediately with token so Flutter can navigate to verify screen
+      return res.status(201).json({
+        message: 'Account created. Please verify your email.',
         token: signToken(user.id),
         user: safeUser(user),
-      });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
-// ─── POST /api/auth/request-otp ───────────────────────────────────────────────
-router.post(
-  '/request-otp',
-  [body('email').isEmail().normalizeEmail()],
-  async (req, res, next) => {
-    if (handleValidation(req, res)) return;
-    try {
-      const { email } = req.body;
-
-      let user = await prisma.user.findUnique({ where: { email } });
-
-      if (!user) {
-        // Create a lightweight account placeholder for OTP flows (no password)
-        const passwordHash = await bcrypt.hash('', 12);
-        user = await prisma.user.create({
-          data: {
-            email,
-            passwordHash,
-            fullName: '',
-            otpCode: null,
-            otpExpiresAt: null,
-          },
-        });
-        await prisma.analytics.create({ data: { userId: user.id } });
-      }
-
-      const otp = generateOtp();
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          otpCode: otp,
-          otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
-        },
-      });
-
-      const emailSent = await safeSendOtpEmail(email, otp, user.language);
-
-      // Return a token so the app can continue with a temporary session
-      const token = signToken(user.id);
-
-      return res.json({
-        message: emailSent ? 'OTP sent.' : 'OTP stored but email delivery failed.',
-        token,
-        user: safeUser(user),
+        requiresVerification: true,
       });
     } catch (err) {
       next(err);
@@ -189,7 +128,7 @@ router.post(
       }
 
       if (!user.isEmailVerified) {
-        // Resend OTP
+        // Resend OTP in background, return 403 with verification flag
         const otp = generateOtp();
         await prisma.user.update({
           where: { id: user.id },
@@ -198,15 +137,16 @@ router.post(
             otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
           },
         });
-        const emailSent = await safeSendOtpEmail(email, otp, user.language);
+        safeSendOtpEmail(email, otp, user.language);
         return res.status(403).json({
-          message: emailSent
-            ? 'Email not verified. A verification code has been sent.'
-            : 'Email not verified. We could not send your verification code. Please contact support.',
+          message: 'Email not verified. A verification code has been sent.',
+          requiresVerification: true,
+          token: signToken(user.id),
+          user: safeUser(user),
         });
       }
 
-      res.json({
+      return res.json({
         token: signToken(user.id),
         user: safeUser(user),
       });
@@ -236,10 +176,10 @@ router.post(
       }
 
       if (!user.otpExpiresAt || new Date() > user.otpExpiresAt) {
-        return res.status(400).json({ message: 'Verification code has expired. Request a new one.' });
+        return res.status(400).json({ message: 'Code expired. Request a new one.' });
       }
 
-      await prisma.user.update({
+      const updated = await prisma.user.update({
         where: { id: user.id },
         data: {
           isEmailVerified: true,
@@ -248,7 +188,11 @@ router.post(
         },
       });
 
-      res.json({ message: 'Email verified successfully.', token: signToken(user.id) });
+      return res.json({
+        message: 'Email verified successfully.',
+        token: signToken(user.id),
+        user: safeUser(updated),
+      });
     } catch (err) {
       next(err);
     }
@@ -277,12 +221,8 @@ router.post(
           otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
         },
       });
-      const emailSent = await safeSendOtpEmail(email, otp, user.language);
-      res.json({
-        message: emailSent
-          ? 'Verification code resent.'
-          : 'Verification code updated but email delivery failed. Please contact support.',
-      });
+      safeSendOtpEmail(email, otp, user.language);
+      return res.json({ message: 'Verification code resent.' });
     } catch (err) {
       next(err);
     }
@@ -290,7 +230,7 @@ router.post(
 );
 
 // ─── GET /api/auth/me ─────────────────────────────────────────────────────────
-router.get('/me', authenticate, async (req, res) => {
+router.get('/me', authenticate, (req, res) => {
   res.json(safeUser(req.user));
 });
 
@@ -307,18 +247,14 @@ router.patch(
   async (req, res, next) => {
     if (handleValidation(req, res)) return;
     try {
-      const allowed = ['fullName', 'language', 'salvationDate', 'testimony'];
       const data = {};
-      if (req.body.full_name) data.fullName = req.body.full_name;
-      if (req.body.language) data.language = req.body.language;
-      if (req.body.salvationDate !== undefined) data.salvationDate = req.body.salvationDate;
-      if (req.body.testimony !== undefined) data.testimony = req.body.testimony;
+      if (req.body.full_name)                   data.fullName      = req.body.full_name;
+      if (req.body.language)                     data.language      = req.body.language;
+      if (req.body.salvationDate !== undefined)  data.salvationDate = req.body.salvationDate;
+      if (req.body.testimony     !== undefined)  data.testimony     = req.body.testimony;
 
-      const user = await prisma.user.update({
-        where: { id: req.user.id },
-        data,
-      });
-      res.json(safeUser(user));
+      const user = await prisma.user.update({ where: { id: req.user.id }, data });
+      return res.json(safeUser(user));
     } catch (err) {
       next(err);
     }
@@ -343,7 +279,7 @@ router.post(
 
       const passwordHash = await bcrypt.hash(newPassword, 12);
       await prisma.user.update({ where: { id: req.user.id }, data: { passwordHash } });
-      res.json({ message: 'Password updated successfully.' });
+      return res.json({ message: 'Password updated successfully.' });
     } catch (err) {
       next(err);
     }

@@ -1,38 +1,16 @@
-const nodemailer = require('nodemailer');
-
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: parseInt(process.env.SMTP_PORT || '587', 10),
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  connectionTimeout: 7000,
-  greetingTimeout: 7000,
-  socketTimeout: 10000,
-});
-
-function timeoutPromise(promise, ms) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Email send timeout')), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
+// src/services/email.js
+// Uses Resend (resend.com) — free: 3,000 emails/month
+// NO SMTP — pure HTTP so Render free tier never blocks it
+// 1. Sign up at resend.com
+// 2. API Keys → Create API Key → copy it
+// 3. Add RESEND_API_KEY to Render environment variables
 
 async function sendOtpEmail(email, otp, lang = 'en') {
   const isEn = lang !== 'fr';
 
-  const subject = isEn ? 'Your ReviveMe Verification Code' : 'Votre code de vérification ReviveMe';
+  const subject = isEn
+    ? 'Your ReviveMe Verification Code'
+    : 'Votre code de vérification ReviveMe';
 
   const html = `
   <!DOCTYPE html>
@@ -56,21 +34,52 @@ async function sendOtpEmail(email, otp, lang = 'en') {
         </p>
       </div>
       <p style="color:#8A8090;font-size:11px;margin-top:24px;">
-        ${isEn ? 'If you did not request this, please ignore this email.' : 'Si vous n\'avez pas demandé ceci, veuillez ignorer cet email.'}
+        ${isEn
+          ? 'If you did not request this, please ignore this email.'
+          : "Si vous n'avez pas demandé ceci, veuillez ignorer cet email."}
       </p>
     </div>
   </body>
   </html>`;
 
-  await timeoutPromise(
-    transporter.sendMail({
-      from: process.env.EMAIL_FROM || 'ReviveMe <noreply@reviveme.app>',
-      to: email,
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.warn('[EMAIL] RESEND_API_KEY not set — skipping email send');
+    return;
+  }
+
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: process.env.EMAIL_FROM || 'ReviveMe <onboarding@resend.dev>',
+      to: [email],
       subject,
       html,
     }),
-    10000,
-  );
+  });
+
+  const responseBody = await res.json();
+
+  if (!res.ok) {
+    throw new Error(`Resend error ${res.status}: ${responseBody.message || JSON.stringify(responseBody)}`);
+  }
+
+  console.log(`[EMAIL] OTP sent to ${email} via Resend. id=${responseBody.id}`);
 }
 
-module.exports = { sendOtpEmail };
+// Safe wrapper — logs error but never throws (so register never fails due to email)
+async function safeSendOtpEmail(email, otp, lang = 'en') {
+  try {
+    await sendOtpEmail(email, otp, lang);
+    return true;
+  } catch (err) {
+    console.error('[EMAIL] Failed to send OTP email:', err.message);
+    return false;
+  }
+}
+
+module.exports = { sendOtpEmail, safeSendOtpEmail };
