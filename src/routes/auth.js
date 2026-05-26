@@ -115,6 +115,57 @@ router.post(
   }
 );
 
+// ─── POST /api/auth/request-otp ───────────────────────────────────────────────
+router.post(
+  '/request-otp',
+  [body('email').isEmail().normalizeEmail()],
+  async (req, res, next) => {
+    if (handleValidation(req, res)) return;
+    try {
+      const { email } = req.body;
+
+      let user = await prisma.user.findUnique({ where: { email } });
+
+      if (!user) {
+        // Create a lightweight account placeholder for OTP flows (no password)
+        const passwordHash = await bcrypt.hash('', 12);
+        user = await prisma.user.create({
+          data: {
+            email,
+            passwordHash,
+            fullName: '',
+            otpCode: null,
+            otpExpiresAt: null,
+          },
+        });
+        await prisma.analytics.create({ data: { userId: user.id } });
+      }
+
+      const otp = generateOtp();
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          otpCode: otp,
+          otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      });
+
+      const emailSent = await safeSendOtpEmail(email, otp, user.language);
+
+      // Return a token so the app can continue with a temporary session
+      const token = signToken(user.id);
+
+      return res.json({
+        message: emailSent ? 'OTP sent.' : 'OTP stored but email delivery failed.',
+        token,
+        user: safeUser(user),
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // ─── POST /api/auth/login ─────────────────────────────────────────────────────
 router.post(
   '/login',
