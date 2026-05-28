@@ -12,6 +12,7 @@ model User {
   email              String    @unique
   passwordHash       String
   fullName           String?   @map("full_name")
+  role               String    @default("user")   // "user" | "admin"
   subscriptionStatus String    @default("free")
   salvationDate      String?
   testimony          String?
