@@ -7,21 +7,28 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─── User ─────────────────────────────────────────────────────
 model User {
-  id                 String    @id @default(uuid())
-  email              String    @unique
-  passwordHash       String
-  fullName           String?   @map("full_name")
-  role               String    @default("user")   // "user" | "admin"
-  subscriptionStatus String    @default("free")
-  salvationDate      String?
-  testimony          String?
-  language           String    @default("en")
-  isEmailVerified    Boolean   @default(false)
-  otpCode            String?
-  otpExpiresAt       DateTime?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  id                  String    @id @default(uuid())
+  email               String    @unique
+  passwordHash        String
+  fullName            String?   @map("full_name")
+  role                String    @default("user")      // "user" | "admin"
+  subscriptionStatus  String    @default("free")
+  salvationDate       String?
+  salvationPrayedAt   DateTime?                        // when they prayed salvation prayer
+  testimony           String?
+  language            String    @default("en")
+  timezone            String    @default("UTC")        // for daily email timing
+  registeredHour      Int       @default(8)            // hour they registered (0-23), used for daily email
+  dailyEmailEnabled   Boolean   @default(true)         // opt-in/out of daily prayer emails
+  lastDailyEmailAt    DateTime?                        // last time daily email was sent
+  isEmailVerified     Boolean   @default(false)
+  isDisabled          Boolean   @default(false)
+  otpCode             String?
+  otpExpiresAt        DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   prayers    Prayer[]
   journals   JournalEntry[]
@@ -31,6 +38,7 @@ model User {
   @@map("users")
 }
 
+// ─── Prayer ───────────────────────────────────────────────────
 model Prayer {
   id             String   @id @default(uuid())
   userId         String   @map("user_id")
@@ -50,6 +58,109 @@ model Prayer {
   @@map("prayers")
 }
 
+// ─── Prayer Library (admin-managed content) ───────────────────
+model PrayerLibraryItem {
+  id          String   @id @default(uuid())
+  category    String                              // "morning" | "anxiety" | "healing" | "financial" | etc.
+  titleEn     String   @map("title_en")
+  titleFr     String?  @map("title_fr")
+  verseEn     String?  @map("verse_en")
+  verseFr     String?  @map("verse_fr")
+  verseRef    String?  @map("verse_ref")
+  prayerEn    String   @map("prayer_en")
+  prayerFr    String?  @map("prayer_fr")
+  actionEn    String?  @map("action_en")
+  actionFr    String?  @map("action_fr")
+  isPremium   Boolean  @default(false) @map("is_premium")
+  isVisible   Boolean  @default(true)  @map("is_visible")
+  sortOrder   Int      @default(0)     @map("sort_order")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("prayer_library")
+}
+
+// ─── Daily Verse (admin-managed) ──────────────────────────────
+model DailyVerse {
+  id        String   @id @default(uuid())
+  verseEn   String   @map("verse_en")
+  verseFr   String?  @map("verse_fr")
+  reference String
+  activeOn  String?  @map("active_on")            // "YYYY-MM-DD" or null for default
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("daily_verses")
+}
+
+// ─── Mental Health Content (admin-managed) ────────────────────
+model MentalHealthContent {
+  id          String   @id @default(uuid())
+  category    String                              // "anxiety"|"depression"|"stress"|"sleep"|"grief"|"selfworth"|"affirmation"
+  titleEn     String   @map("title_en")
+  titleFr     String?  @map("title_fr")
+  contentEn   String   @map("content_en")
+  contentFr   String?  @map("content_fr")
+  audioUrl    String?  @map("audio_url")
+  isPremium   Boolean  @default(true)  @map("is_premium")
+  isVisible   Boolean  @default(true)  @map("is_visible")
+  sortOrder   Int      @default(0)     @map("sort_order")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("mental_health_content")
+}
+
+// ─── Salvation Content (admin-managed) ────────────────────────
+model SalvationContent {
+  id          String   @id @default(uuid())
+  key         String   @unique                    // "intro"|"prayer"|"verses"|"guide"
+  contentEn   String   @map("content_en")
+  contentFr   String?  @map("content_fr")
+  updatedAt   DateTime @updatedAt
+
+  @@map("salvation_content")
+}
+
+// ─── App Settings (admin-managed key-value) ───────────────────
+model AppSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("app_settings")
+}
+
+// ─── AI Chat Conversations ────────────────────────────────────
+model AiConversation {
+  id        String    @id @default(uuid())
+  sessionId String    @map("session_id")          // anonymous or user-based session
+  userEmail String?   @map("user_email")
+  messages  Json      @default("[]")              // [{role,content,timestamp}]
+  language  String    @default("en")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("ai_conversations")
+}
+
+// ─── AI Knowledge Base (admin-managed FAQs) ──────────────────
+model AiKnowledgeBase {
+  id        String   @id @default(uuid())
+  question  String
+  answerEn  String   @map("answer_en")
+  answerFr  String?  @map("answer_fr")
+  category  String   @default("general")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("ai_knowledge_base")
+}
+
+// ─── Journal Entry ────────────────────────────────────────────
 model JournalEntry {
   id          String   @id @default(uuid())
   userId      String   @map("user_id")
@@ -68,6 +179,7 @@ model JournalEntry {
   @@map("journal_entries")
 }
 
+// ─── Daily Goal ───────────────────────────────────────────────
 model DailyGoal {
   id        String   @id @default(uuid())
   userId    String   @map("user_id")
@@ -83,6 +195,7 @@ model DailyGoal {
   @@map("daily_goals")
 }
 
+// ─── Analytics ────────────────────────────────────────────────
 model Analytics {
   id              String   @id @default(uuid())
   userId          String   @unique @map("user_id")
