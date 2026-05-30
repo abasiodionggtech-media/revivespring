@@ -1,20 +1,21 @@
 require('dotenv').config();
-const express = require('express');
+const express  = require('express');
 const { v4: uuidv4 } = require('uuid');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
-const rateLimit = require('express-rate-limit');
+const cors     = require('cors');
+const helmet   = require('helmet');
+const morgan   = require('morgan');
+const rateLimit= require('express-rate-limit');
 
 const authRoutes      = require('./routes/auth');
 const prayerRoutes    = require('./routes/prayers');
 const journalRoutes   = require('./routes/journal');
 const goalRoutes      = require('./routes/goals');
 const analyticsRoutes = require('./routes/analytics');
-const adminRoutes     = require('./routes/admin');          // ← NEW
+const adminRoutes     = require('./routes/admin');
 const { authenticate }      = require('./middleware/auth');
-const { authenticateAdmin } = require('./middleware/adminAuth'); // ← NEW
+const { authenticateAdmin } = require('./middleware/adminAuth');
 const prisma = require('./config/prisma');
+const { runDailyPrayerEmailJob } = require('./jobs/dailyPrayerEmail');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -34,90 +35,78 @@ app.use((req, res, next) => {
   next();
 });
 
-// Security
 app.use(helmet());
 
-// CORS
 app.use(cors({
   origin: '*',
-  methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET','POST','PATCH','PUT','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
 }));
 app.options('*', cors());
 
-// Rate limiting
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
   max:      parseInt(process.env.RATE_LIMIT_MAX        || '200',   10),
-  standardHeaders: true,
-  legacyHeaders:   false,
+  standardHeaders: true, legacyHeaders: false,
   message: { message: 'Too many requests, please slow down.' },
 });
 app.use('/api', limiter);
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 30,
-  message: { message: 'Too many auth attempts. Try again later.' },
-});
+const authLimiter = rateLimit({ windowMs: 15*60*1000, max: 30, message: { message: 'Too many auth attempts.' } });
 
-// Body parsing
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
+if (process.env.NODE_ENV !== 'test') app.use(morgan('dev'));
 
-// Logging
-if (process.env.NODE_ENV !== 'test') {
-  app.use(morgan('dev'));
-}
+// AI Chat endpoint (public — no auth required for chatting)
+app.post('/api/ai/chat', require('./routes/aiChat'));
 
 // Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
-// ─── Routes ──────────────────────────────────────────────
+// Routes
 app.use('/api/auth',      authLimiter, authRoutes);
 app.use('/api/prayers',   authenticate, prayerRoutes);
 app.use('/api/journal',   authenticate, journalRoutes);
 app.use('/api/goals',     authenticate, goalRoutes);
 app.use('/api/analytics', authenticate, analyticsRoutes);
-app.use('/api/admin',     adminRoutes);  // admin routes handle their own auth internally
+app.use('/api/admin',     adminRoutes);
 
-// ─── 404 ─────────────────────────────────────────────────
-app.use((req, res) => {
-  res.status(404).json({ message: 'Route not found.' });
-});
+// 404
+app.use((req, res) => res.status(404).json({ message: 'Route not found.' }));
 
-// ─── Global Error Handler ─────────────────────────────────
+// Global error handler
 app.use((err, req, res, _next) => {
   const id = req && req.id ? req.id : 'no-id';
   console.error(`[ERROR][${id}]`, err.stack || err);
-  if (err && err.name === 'PrismaClientKnownRequestError') {
-    console.error(`[PRISMA][${id}] code=${err.code} meta=${JSON.stringify(err.meta)}`);
-  }
   const status = err.status || 500;
-  const safeMessage = process.env.NODE_ENV === 'production' ? 'Internal server error.' : err.message;
   res.status(status).json({
-    message: safeMessage,
+    message: process.env.NODE_ENV === 'production' ? 'Internal server error.' : err.message,
     requestId: id,
-    prismaCode: (process.env.NODE_ENV === 'production' ? undefined : (err && err.code) || undefined),
   });
 });
 
-// ─── Start ────────────────────────────────────────────────
+// Start server
 (async () => {
   try {
     await prisma.$connect();
-    console.log('✅ Prisma connected to the database.');
+    console.log('✅ Prisma connected.');
   } catch (err) {
-    console.error('[DB][ERROR] Could not connect:', err.message || err);
+    console.error('[DB] Connect error:', err.message);
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✝  ReviveSpring API running on port ${PORT}`);
-    console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`   Admin panel: /api/admin/* (requires admin role)`);
+    console.log(`✝  ReviveSpring API on port ${PORT}`);
+    console.log(`   Daily email job: runs every hour`);
   });
+
+  // ── Daily Prayer Email Scheduler ────────────────────────────
+  // Runs once on startup to catch any users missed, then every hour
+  try { await runDailyPrayerEmailJob(); } catch (e) { console.error('[JOB] Startup run error:', e.message); }
+  setInterval(async () => {
+    try { await runDailyPrayerEmailJob(); }
+    catch (e) { console.error('[JOB] Hourly run error:', e.message); }
+  }, 60 * 60 * 1000);
 })();
 
 module.exports = app;
