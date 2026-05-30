@@ -1,21 +1,65 @@
 'use strict';
 
 /**
- * src/routes/admin.js
- * All routes require admin role via authenticateAdmin middleware.
+ * src/routes/admin.js — Full admin API
  *
- * GET    /api/admin/stats              — dashboard overview numbers
- * GET    /api/admin/users              — paginated list of all users
- * GET    /api/admin/users/:id          — single user detail with counts
- * PATCH  /api/admin/users/:id          — edit user fields
- * DELETE /api/admin/users/:id          — delete user + all their data
- * PATCH  /api/admin/users/:id/role     — promote/demote admin role
- * PATCH  /api/admin/users/:id/verify   — manually verify user email
- * PATCH  /api/admin/users/:id/plan     — change subscription status
- * GET    /api/admin/prayers            — all prayers (paginated)
- * DELETE /api/admin/prayers/:id        — delete a prayer
- * GET    /api/admin/journal            — all journal entries (paginated)
- * DELETE /api/admin/journal/:id        — delete a journal entry
+ * USERS
+ *   GET    /api/admin/stats
+ *   GET    /api/admin/users
+ *   GET    /api/admin/users/:id
+ *   PATCH  /api/admin/users/:id
+ *   DELETE /api/admin/users/:id
+ *   PATCH  /api/admin/users/:id/role
+ *   PATCH  /api/admin/users/:id/verify
+ *   PATCH  /api/admin/users/:id/plan
+ *   PATCH  /api/admin/users/:id/disable
+ *
+ * PRAYER LIBRARY
+ *   GET    /api/admin/library
+ *   POST   /api/admin/library
+ *   PATCH  /api/admin/library/:id
+ *   DELETE /api/admin/library/:id
+ *
+ * DAILY VERSE
+ *   GET    /api/admin/verse
+ *   POST   /api/admin/verse
+ *   PATCH  /api/admin/verse/:id
+ *   DELETE /api/admin/verse/:id
+ *
+ * MENTAL HEALTH CONTENT
+ *   GET    /api/admin/mental-health
+ *   POST   /api/admin/mental-health
+ *   PATCH  /api/admin/mental-health/:id
+ *   DELETE /api/admin/mental-health/:id
+ *
+ * SALVATION CONTENT
+ *   GET    /api/admin/salvation
+ *   PATCH  /api/admin/salvation/:key
+ *
+ * APP SETTINGS
+ *   GET    /api/admin/settings
+ *   PATCH  /api/admin/settings/:key
+ *
+ * AI CONVERSATIONS
+ *   GET    /api/admin/ai/conversations
+ *   GET    /api/admin/ai/conversations/:id
+ *   DELETE /api/admin/ai/conversations/:id
+ *   GET    /api/admin/ai/knowledge
+ *   POST   /api/admin/ai/knowledge
+ *   PATCH  /api/admin/ai/knowledge/:id
+ *   DELETE /api/admin/ai/knowledge/:id
+ *
+ * PRAYERS (user generated)
+ *   GET    /api/admin/prayers
+ *   DELETE /api/admin/prayers/:id
+ *
+ * JOURNAL
+ *   GET    /api/admin/journal
+ *   DELETE /api/admin/journal/:id
+ *
+ * DAILY EMAIL
+ *   POST   /api/admin/email/test          — send test daily email to yourself
+ *   POST   /api/admin/email/broadcast     — manual broadcast to all users
  */
 
 const express = require('express');
@@ -23,258 +67,439 @@ const bcrypt  = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const prisma  = require('../config/prisma');
 const { authenticateAdmin } = require('../middleware/adminAuth');
+const { sendDailyPrayerEmail } = require('../services/email');
 
 const router = express.Router();
-
-// Apply admin auth to all routes in this file
 router.use(authenticateAdmin);
 
-function handleValidation(req, res) {
+const PAGE = 20;
+
+function ok(req, res) {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    res.status(422).json({ message: errors.array()[0].msg });
-    return true;
-  }
-  return false;
+  if (!errors.isEmpty()) { res.status(422).json({ message: errors.array()[0].msg }); return false; }
+  return true;
+}
+function safe(user) {
+  const { passwordHash, otpCode, otpExpiresAt, ...s } = user; return s;
 }
 
-function safeUser(user) {
-  const { passwordHash, otpCode, otpExpiresAt, ...safe } = user;
-  return safe;
-}
-
-const PAGE_SIZE = 20;
-
-/* ─── GET /api/admin/stats ───────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════
+   STATS
+══════════════════════════════════════════════════════════ */
 router.get('/stats', async (req, res, next) => {
   try {
+    const today    = new Date().toISOString().split('T')[0];
+    const thisMonth= new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
     const [
-      totalUsers,
-      verifiedUsers,
-      adminUsers,
-      premiumUsers,
-      totalPrayers,
-      totalJournal,
-      totalGoals,
+      totalUsers, verifiedUsers, adminUsers, premiumUsers, disabledUsers,
+      totalPrayers, totalJournal, totalGoals,
+      newUsersThisMonth, salvationUsers,
       recentUsers,
     ] = await Promise.all([
       prisma.user.count(),
       prisma.user.count({ where: { isEmailVerified: true } }),
       prisma.user.count({ where: { role: 'admin' } }),
       prisma.user.count({ where: { subscriptionStatus: 'premium' } }),
+      prisma.user.count({ where: { isDisabled: true } }),
       prisma.prayer.count(),
       prisma.journalEntry.count(),
       prisma.dailyGoal.count(),
+      prisma.user.count({ where: { createdAt: { gte: thisMonth } } }),
+      prisma.user.count({ where: { salvationPrayedAt: { not: null } } }),
       prisma.user.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 5,
+        orderBy: { createdAt: 'desc' }, take: 5,
         select: { id:true, email:true, fullName:true, role:true, subscriptionStatus:true, isEmailVerified:true, createdAt:true },
       }),
     ]);
 
     res.json({
-      totalUsers,
-      verifiedUsers,
-      unverifiedUsers: totalUsers - verifiedUsers,
-      adminUsers,
-      premiumUsers,
-      freeUsers: totalUsers - premiumUsers,
-      totalPrayers,
-      totalJournal,
-      totalGoals,
+      totalUsers, verifiedUsers, unverifiedUsers: totalUsers - verifiedUsers,
+      adminUsers, premiumUsers, freeUsers: totalUsers - premiumUsers,
+      disabledUsers, newUsersThisMonth, salvationUsers,
+      totalPrayers, totalJournal, totalGoals,
+      conversionRate: totalUsers > 0 ? Math.round(premiumUsers / totalUsers * 100) : 0,
       recentUsers,
     });
   } catch (err) { next(err); }
 });
 
-/* ─── GET /api/admin/users ───────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════
+   USERS
+══════════════════════════════════════════════════════════ */
 router.get('/users', async (req, res, next) => {
   try {
-    const page    = Math.max(1, parseInt(req.query.page  || '1',  10));
-    const limit   = Math.min(100, parseInt(req.query.limit || String(PAGE_SIZE), 10));
-    const search  = (req.query.search || '').trim();
-    const role    = req.query.role   || undefined;
-    const plan    = req.query.plan   || undefined;
-
-    const where = {};
-    if (search) {
-      where.OR = [
-        { email:    { contains: search, mode: 'insensitive' } },
-        { fullName: { contains: search, mode: 'insensitive' } },
-      ];
-    }
-    if (role) where.role = role;
-    if (plan) where.subscriptionStatus = plan;
+    const page   = Math.max(1, parseInt(req.query.page  || '1',  10));
+    const limit  = Math.min(100, parseInt(req.query.limit || String(PAGE), 10));
+    const search = (req.query.search || '').trim();
+    const where  = {};
+    if (search) where.OR = [{ email: { contains: search, mode:'insensitive' } }, { fullName: { contains: search, mode:'insensitive' } }];
+    if (req.query.role) where.role = req.query.role;
+    if (req.query.plan) where.subscriptionStatus = req.query.plan;
+    if (req.query.verified === 'true')  where.isEmailVerified = true;
+    if (req.query.verified === 'false') where.isEmailVerified = false;
 
     const [users, total] = await Promise.all([
       prisma.user.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip:  (page - 1) * limit,
-        take:  limit,
+        where, orderBy: { createdAt: 'desc' },
+        skip: (page-1)*limit, take: limit,
         select: {
-          id: true, email: true, fullName: true, role: true,
-          subscriptionStatus: true, isEmailVerified: true,
-          language: true, createdAt: true, updatedAt: true,
-          _count: { select: { prayers: true, journals: true, dailyGoals: true } },
+          id:true, email:true, fullName:true, role:true, subscriptionStatus:true,
+          isEmailVerified:true, isDisabled:true, language:true, dailyEmailEnabled:true,
+          salvationPrayedAt:true, createdAt:true, updatedAt:true,
+          _count: { select: { prayers:true, journals:true, dailyGoals:true } },
         },
       }),
       prisma.user.count({ where }),
     ]);
-
-    res.json({
-      users,
-      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
-    });
+    res.json({ users, pagination: { page, limit, total, pages: Math.ceil(total/limit) } });
   } catch (err) { next(err); }
 });
 
-/* ─── GET /api/admin/users/:id ───────────────────────────────── */
 router.get('/users/:id', async (req, res, next) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.params.id },
-      include: {
-        analytics: true,
-        _count: { select: { prayers: true, journals: true, dailyGoals: true } },
-      },
+      include: { analytics: true, _count: { select: { prayers:true, journals:true, dailyGoals:true } } },
     });
     if (!user) return res.status(404).json({ message: 'User not found.' });
-    res.json(safeUser(user));
+    res.json(safe(user));
   } catch (err) { next(err); }
 });
 
-/* ─── PATCH /api/admin/users/:id ─────────────────────────────── */
 router.patch('/users/:id',
-  [
-    body('full_name').optional().trim().notEmpty().withMessage('Name cannot be empty.'),
-    body('email').optional().isEmail().normalizeEmail(),
-    body('language').optional().isIn(['en','fr']),
-    body('password').optional().isLength({ min: 6 }).withMessage('Password must be at least 6 chars.'),
-  ],
+  [ body('full_name').optional().trim().notEmpty(), body('email').optional().isEmail().normalizeEmail(), body('language').optional().isIn(['en','fr']), body('password').optional().isLength({ min: 6 }) ],
   async (req, res, next) => {
-    if (handleValidation(req, res)) return;
+    if (!ok(req, res)) return;
     try {
-      const { full_name, email, language, password, salvationDate, testimony } = req.body;
+      const { full_name, email, language, password, salvationDate, testimony, dailyEmailEnabled } = req.body;
       const data = {};
-      if (full_name    !== undefined) data.fullName       = full_name;
-      if (email        !== undefined) data.email          = email;
-      if (language     !== undefined) data.language       = language;
-      if (salvationDate!== undefined) data.salvationDate  = salvationDate;
-      if (testimony    !== undefined) data.testimony      = testimony;
-      if (password) data.passwordHash = await bcrypt.hash(password, 12);
-
+      if (full_name !== undefined)          data.fullName           = full_name;
+      if (email    !== undefined)           data.email              = email;
+      if (language !== undefined)           data.language           = language;
+      if (salvationDate !== undefined)      data.salvationDate      = salvationDate;
+      if (testimony !== undefined)          data.testimony          = testimony;
+      if (dailyEmailEnabled !== undefined)  data.dailyEmailEnabled  = Boolean(dailyEmailEnabled);
+      if (password)                         data.passwordHash       = await bcrypt.hash(password, 12);
       const user = await prisma.user.update({ where: { id: req.params.id }, data });
-      res.json(safeUser(user));
+      res.json(safe(user));
     } catch (err) { next(err); }
   }
 );
 
-/* ─── DELETE /api/admin/users/:id ────────────────────────────── */
 router.delete('/users/:id', async (req, res, next) => {
   try {
-    // Prevent admin from deleting themselves
-    if (req.params.id === req.user.id) {
-      return res.status(400).json({ message: 'You cannot delete your own admin account.' });
-    }
+    if (req.params.id === req.user.id) return res.status(400).json({ message: 'Cannot delete your own account.' });
     await prisma.user.delete({ where: { id: req.params.id } });
     res.status(204).end();
   } catch (err) { next(err); }
 });
 
-/* ─── PATCH /api/admin/users/:id/role ────────────────────────── */
-router.patch('/users/:id/role',
-  [ body('role').isIn(['user','admin']).withMessage('Role must be user or admin.') ],
-  async (req, res, next) => {
-    if (handleValidation(req, res)) return;
-    try {
-      if (req.params.id === req.user.id) {
-        return res.status(400).json({ message: 'You cannot change your own role.' });
-      }
-      const user = await prisma.user.update({
-        where: { id: req.params.id },
-        data:  { role: req.body.role },
-      });
-      res.json(safeUser(user));
-    } catch (err) { next(err); }
-  }
-);
-
-/* ─── PATCH /api/admin/users/:id/verify ─────────────────────── */
-router.patch('/users/:id/verify', async (req, res, next) => {
+router.patch('/users/:id/role',   [ body('role').isIn(['user','admin']) ], async (req, res, next) => {
+  if (!ok(req, res)) return;
   try {
-    const user = await prisma.user.update({
-      where: { id: req.params.id },
-      data:  { isEmailVerified: true, otpCode: null, otpExpiresAt: null },
-    });
-    res.json(safeUser(user));
+    if (req.params.id === req.user.id) return res.status(400).json({ message: 'Cannot change your own role.' });
+    const user = await prisma.user.update({ where: { id: req.params.id }, data: { role: req.body.role } });
+    res.json(safe(user));
   } catch (err) { next(err); }
 });
 
-/* ─── PATCH /api/admin/users/:id/plan ───────────────────────── */
-router.patch('/users/:id/plan',
-  [ body('plan').isIn(['free','premium']).withMessage('Plan must be free or premium.') ],
-  async (req, res, next) => {
-    if (handleValidation(req, res)) return;
-    try {
-      const user = await prisma.user.update({
-        where: { id: req.params.id },
-        data:  { subscriptionStatus: req.body.plan },
-      });
-      res.json(safeUser(user));
-    } catch (err) { next(err); }
-  }
-);
+router.patch('/users/:id/verify', async (req, res, next) => {
+  try {
+    const user = await prisma.user.update({ where: { id: req.params.id }, data: { isEmailVerified: true, otpCode: null, otpExpiresAt: null } });
+    res.json(safe(user));
+  } catch (err) { next(err); }
+});
 
-/* ─── GET /api/admin/prayers ─────────────────────────────────── */
+router.patch('/users/:id/plan',   [ body('plan').isIn(['free','premium']) ], async (req, res, next) => {
+  if (!ok(req, res)) return;
+  try {
+    const user = await prisma.user.update({ where: { id: req.params.id }, data: { subscriptionStatus: req.body.plan } });
+    res.json(safe(user));
+  } catch (err) { next(err); }
+});
+
+router.patch('/users/:id/disable', async (req, res, next) => {
+  try {
+    if (req.params.id === req.user.id) return res.status(400).json({ message: 'Cannot disable your own account.' });
+    const user = await prisma.user.update({ where: { id: req.params.id }, data: { isDisabled: !!(req.body.disabled) } });
+    res.json(safe(user));
+  } catch (err) { next(err); }
+});
+
+/* ══════════════════════════════════════════════════════════
+   PRAYER LIBRARY
+══════════════════════════════════════════════════════════ */
+router.get('/library', async (req, res, next) => {
+  try {
+    const where = {};
+    if (req.query.category) where.category = req.query.category;
+    if (req.query.premium === 'true')  where.isPremium = true;
+    if (req.query.premium === 'false') where.isPremium = false;
+    const items = await prisma.prayerLibraryItem.findMany({ where, orderBy: [{ category:'asc' }, { sortOrder:'asc' }] });
+    res.json(items);
+  } catch (err) { next(err); }
+});
+
+router.post('/library', async (req, res, next) => {
+  try {
+    const item = await prisma.prayerLibraryItem.create({ data: req.body });
+    res.status(201).json(item);
+  } catch (err) { next(err); }
+});
+
+router.patch('/library/:id', async (req, res, next) => {
+  try {
+    const item = await prisma.prayerLibraryItem.update({ where: { id: req.params.id }, data: req.body });
+    res.json(item);
+  } catch (err) { next(err); }
+});
+
+router.delete('/library/:id', async (req, res, next) => {
+  try {
+    await prisma.prayerLibraryItem.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+/* ══════════════════════════════════════════════════════════
+   DAILY VERSE
+══════════════════════════════════════════════════════════ */
+router.get('/verse', async (req, res, next) => {
+  try {
+    const verses = await prisma.dailyVerse.findMany({ orderBy: { createdAt: 'desc' } });
+    res.json(verses);
+  } catch (err) { next(err); }
+});
+
+router.post('/verse', async (req, res, next) => {
+  try {
+    const verse = await prisma.dailyVerse.create({ data: req.body });
+    res.status(201).json(verse);
+  } catch (err) { next(err); }
+});
+
+router.patch('/verse/:id', async (req, res, next) => {
+  try {
+    const verse = await prisma.dailyVerse.update({ where: { id: req.params.id }, data: req.body });
+    res.json(verse);
+  } catch (err) { next(err); }
+});
+
+router.delete('/verse/:id', async (req, res, next) => {
+  try {
+    await prisma.dailyVerse.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+/* ══════════════════════════════════════════════════════════
+   MENTAL HEALTH CONTENT
+══════════════════════════════════════════════════════════ */
+router.get('/mental-health', async (req, res, next) => {
+  try {
+    const where = {};
+    if (req.query.category) where.category = req.query.category;
+    const items = await prisma.mentalHealthContent.findMany({ where, orderBy: [{ category:'asc' }, { sortOrder:'asc' }] });
+    res.json(items);
+  } catch (err) { next(err); }
+});
+
+router.post('/mental-health', async (req, res, next) => {
+  try {
+    const item = await prisma.mentalHealthContent.create({ data: req.body });
+    res.status(201).json(item);
+  } catch (err) { next(err); }
+});
+
+router.patch('/mental-health/:id', async (req, res, next) => {
+  try {
+    const item = await prisma.mentalHealthContent.update({ where: { id: req.params.id }, data: req.body });
+    res.json(item);
+  } catch (err) { next(err); }
+});
+
+router.delete('/mental-health/:id', async (req, res, next) => {
+  try {
+    await prisma.mentalHealthContent.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+/* ══════════════════════════════════════════════════════════
+   SALVATION CONTENT
+══════════════════════════════════════════════════════════ */
+router.get('/salvation', async (req, res, next) => {
+  try {
+    const items = await prisma.salvationContent.findMany({ orderBy: { key: 'asc' } });
+    res.json(items);
+  } catch (err) { next(err); }
+});
+
+router.patch('/salvation/:key', async (req, res, next) => {
+  try {
+    const item = await prisma.salvationContent.upsert({
+      where:  { key: req.params.key },
+      update: req.body,
+      create: { key: req.params.key, ...req.body },
+    });
+    res.json(item);
+  } catch (err) { next(err); }
+});
+
+/* ══════════════════════════════════════════════════════════
+   APP SETTINGS
+══════════════════════════════════════════════════════════ */
+router.get('/settings', async (req, res, next) => {
+  try {
+    const settings = await prisma.appSetting.findMany({ orderBy: { key: 'asc' } });
+    res.json(settings);
+  } catch (err) { next(err); }
+});
+
+router.patch('/settings/:key', async (req, res, next) => {
+  try {
+    const setting = await prisma.appSetting.upsert({
+      where:  { key: req.params.key },
+      update: { value: String(req.body.value) },
+      create: { key: req.params.key, value: String(req.body.value) },
+    });
+    res.json(setting);
+  } catch (err) { next(err); }
+});
+
+/* ══════════════════════════════════════════════════════════
+   AI CONVERSATIONS
+══════════════════════════════════════════════════════════ */
+router.get('/ai/conversations', async (req, res, next) => {
+  try {
+    const page  = Math.max(1, parseInt(req.query.page || '1', 10));
+    const limit = Math.min(100, parseInt(req.query.limit || String(PAGE), 10));
+    const [items, total] = await Promise.all([
+      prisma.aiConversation.findMany({ orderBy: { updatedAt:'desc' }, skip:(page-1)*limit, take:limit }),
+      prisma.aiConversation.count(),
+    ]);
+    res.json({ conversations: items, pagination: { page, limit, total, pages: Math.ceil(total/limit) } });
+  } catch (err) { next(err); }
+});
+
+router.get('/ai/conversations/:id', async (req, res, next) => {
+  try {
+    const item = await prisma.aiConversation.findUnique({ where: { id: req.params.id } });
+    if (!item) return res.status(404).json({ message: 'Not found.' });
+    res.json(item);
+  } catch (err) { next(err); }
+});
+
+router.delete('/ai/conversations/:id', async (req, res, next) => {
+  try {
+    await prisma.aiConversation.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+router.get('/ai/knowledge', async (req, res, next) => {
+  try {
+    const items = await prisma.aiKnowledgeBase.findMany({ orderBy: { category:'asc' } });
+    res.json(items);
+  } catch (err) { next(err); }
+});
+
+router.post('/ai/knowledge', async (req, res, next) => {
+  try {
+    const item = await prisma.aiKnowledgeBase.create({ data: req.body });
+    res.status(201).json(item);
+  } catch (err) { next(err); }
+});
+
+router.patch('/ai/knowledge/:id', async (req, res, next) => {
+  try {
+    const item = await prisma.aiKnowledgeBase.update({ where: { id: req.params.id }, data: req.body });
+    res.json(item);
+  } catch (err) { next(err); }
+});
+
+router.delete('/ai/knowledge/:id', async (req, res, next) => {
+  try {
+    await prisma.aiKnowledgeBase.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+/* ══════════════════════════════════════════════════════════
+   USER PRAYERS (generated)
+══════════════════════════════════════════════════════════ */
 router.get('/prayers', async (req, res, next) => {
   try {
     const page  = Math.max(1, parseInt(req.query.page || '1', 10));
-    const limit = Math.min(100, parseInt(req.query.limit || String(PAGE_SIZE), 10));
+    const limit = Math.min(100, parseInt(req.query.limit || String(PAGE), 10));
     const [prayers, total] = await Promise.all([
-      prisma.prayer.findMany({
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-        include: { user: { select: { email: true, fullName: true } } },
-      }),
+      prisma.prayer.findMany({ orderBy: { createdAt:'desc' }, skip:(page-1)*limit, take:limit, include: { user: { select: { email:true, fullName:true } } } }),
       prisma.prayer.count(),
     ]);
-    res.json({ prayers, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
+    res.json({ prayers, pagination: { page, limit, total, pages: Math.ceil(total/limit) } });
   } catch (err) { next(err); }
 });
 
-/* ─── DELETE /api/admin/prayers/:id ──────────────────────────── */
 router.delete('/prayers/:id', async (req, res, next) => {
-  try {
-    await prisma.prayer.delete({ where: { id: req.params.id } });
-    res.status(204).end();
-  } catch (err) { next(err); }
+  try { await prisma.prayer.delete({ where: { id: req.params.id } }); res.status(204).end(); }
+  catch (err) { next(err); }
 });
 
-/* ─── GET /api/admin/journal ─────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════
+   JOURNAL
+══════════════════════════════════════════════════════════ */
 router.get('/journal', async (req, res, next) => {
   try {
     const page  = Math.max(1, parseInt(req.query.page || '1', 10));
-    const limit = Math.min(100, parseInt(req.query.limit || String(PAGE_SIZE), 10));
+    const limit = Math.min(100, parseInt(req.query.limit || String(PAGE), 10));
     const [entries, total] = await Promise.all([
-      prisma.journalEntry.findMany({
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-        include: { user: { select: { email: true, fullName: true } } },
-      }),
+      prisma.journalEntry.findMany({ orderBy: { createdAt:'desc' }, skip:(page-1)*limit, take:limit, include: { user: { select: { email:true, fullName:true } } } }),
       prisma.journalEntry.count(),
     ]);
-    res.json({ entries, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
+    res.json({ entries, pagination: { page, limit, total, pages: Math.ceil(total/limit) } });
   } catch (err) { next(err); }
 });
 
-/* ─── DELETE /api/admin/journal/:id ──────────────────────────── */
 router.delete('/journal/:id', async (req, res, next) => {
+  try { await prisma.journalEntry.delete({ where: { id: req.params.id } }); res.status(204).end(); }
+  catch (err) { next(err); }
+});
+
+/* ══════════════════════════════════════════════════════════
+   DAILY EMAIL TOOLS
+══════════════════════════════════════════════════════════ */
+router.post('/email/test', async (req, res, next) => {
   try {
-    await prisma.journalEntry.delete({ where: { id: req.params.id } });
-    res.status(204).end();
+    const prayer = {
+      mood: 'grateful', verse: "Give thanks to the Lord, for he is good.", ref: "Psalm 107:1",
+      prayer: "Father, thank You for this test. Your grace is real. In Jesus' name, Amen.",
+      action: "Take a moment to breathe and thank God for one thing right now.",
+    };
+    await sendDailyPrayerEmail(req.user.email, req.user.fullName || 'Admin', prayer, req.user.language || 'en');
+    res.json({ message: 'Test email sent to ' + req.user.email });
+  } catch (err) { next(err); }
+});
+
+router.post('/email/broadcast', async (req, res, next) => {
+  try {
+    const users = await prisma.user.findMany({
+      where: { isEmailVerified: true, isDisabled: false, dailyEmailEnabled: true },
+      select: { email:true, fullName:true, language:true },
+    });
+    const prayer = req.body.prayer || {
+      mood: 'hopeful', verse: "For I know the plans I have for you, declares the Lord.", ref: "Jeremiah 29:11",
+      prayer: "Lord, thank You for Your faithful plans for each of us. We trust You today. Amen.",
+      action: "Share this prayer with one person who needs hope today.",
+    };
+    let sent = 0, failed = 0;
+    for (const user of users) {
+      try {
+        await sendDailyPrayerEmail(user.email, user.fullName, prayer, user.language || 'en');
+        sent++;
+      } catch { failed++; }
+    }
+    res.json({ message: 'Broadcast complete.', sent, failed, total: users.length });
   } catch (err) { next(err); }
 });
 
