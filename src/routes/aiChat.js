@@ -102,7 +102,7 @@ module.exports = async function aiChatHandler(req, res, next) {
     contents.push({ role: 'user', parts: [{ text: message }] });
 
     var payload = {
-      system_instruction: { parts: [{ text: systemPrompt }] },
+      systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: contents,
       generationConfig: {
         temperature: 0.7,
