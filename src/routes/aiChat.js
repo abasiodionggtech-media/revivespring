@@ -38,7 +38,8 @@ function geminiRequest(payload) {
     if (!apiKey) { reject(new Error('GEMINI_API_KEY not set.')); return; }
 
     var body = JSON.stringify(payload);
-    var path = '/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey;
+    var path = '/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent?key=' + apiKey;
+
     var options = {
       hostname: 'generativelanguage.googleapis.com',
       port: 443,
