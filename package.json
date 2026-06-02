@@ -12,6 +12,7 @@
     "migrate:deploy": "npx prisma migrate deploy",
     "generate": "npx prisma generate",
     "seed": "node src/config/seed.js",
+    "reset:regular-users": "node scripts/reset-regular-users.js",
     "studio": "npx prisma studio"
   },
   "dependencies": {
