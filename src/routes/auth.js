@@ -230,8 +230,15 @@ router.post(
 );
 
 // ─── GET /api/auth/me ─────────────────────────────────────────────────────────
-router.get('/me', authenticate, (req, res) => {
-  res.json(safeUser(req.user));
+router.get('/me', authenticate, async (req, res, next) => {
+  try {
+    await prisma.analytics.upsert({
+      where: { userId: req.user.id },
+      create: { userId: req.user.id, visitCount: 1 },
+      update: { visitCount: { increment: 1 } },
+    });
+    res.json(safeUser(req.user));
+  } catch (err) { next(err); }
 });
 
 // ─── PATCH /api/auth/me ───────────────────────────────────────────────────────
@@ -243,6 +250,8 @@ router.patch(
     body('language').optional().isIn(['en', 'fr']),
     body('salvationDate').optional().isString(),
     body('testimony').optional().isString(),
+    body('dailyEmailEnabled').optional().isBoolean(),
+    body('onboarding_data').optional().isObject(),
   ],
   async (req, res, next) => {
     if (handleValidation(req, res)) return;
@@ -252,6 +261,8 @@ router.patch(
       if (req.body.language)                     data.language      = req.body.language;
       if (req.body.salvationDate !== undefined)  data.salvationDate = req.body.salvationDate;
       if (req.body.testimony     !== undefined)  data.testimony     = req.body.testimony;
+      if (req.body.dailyEmailEnabled !== undefined) data.dailyEmailEnabled = req.body.dailyEmailEnabled;
+      if (req.body.onboarding_data !== undefined) data.onboardingData = req.body.onboarding_data;
 
       const user = await prisma.user.update({ where: { id: req.user.id }, data });
       return res.json(safeUser(user));

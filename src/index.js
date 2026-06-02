@@ -11,8 +11,10 @@ const prayerRoutes    = require('./routes/prayers');
 const journalRoutes   = require('./routes/journal');
 const goalRoutes      = require('./routes/goals');
 const analyticsRoutes = require('./routes/analytics');
-const adminRoutes       = require('./routes/admin');
-const onboardingRoutes  = require('./routes/onboarding');
+const onboardingRoutes= require('./routes/onboarding');
+const libraryRoutes   = require('./routes/library');
+const dailyVerseRoutes= require('./routes/dailyVerse');
+const adminRoutes     = require('./routes/admin');
 const { authenticate }      = require('./middleware/auth');
 const { authenticateAdmin } = require('./middleware/adminAuth');
 const prisma = require('./config/prisma');
@@ -71,8 +73,10 @@ app.use('/api/prayers',   authenticate, prayerRoutes);
 app.use('/api/journal',   authenticate, journalRoutes);
 app.use('/api/goals',     authenticate, goalRoutes);
 app.use('/api/analytics', authenticate, analyticsRoutes);
-app.use('/api/admin',      adminRoutes);
 app.use('/api/onboarding', authenticate, onboardingRoutes);
+app.use('/api/library',   authenticate, libraryRoutes);
+app.use('/api/daily-verse', authenticate, dailyVerseRoutes);
+app.use('/api/admin',     adminRoutes);
 
 // 404
 app.use((req, res) => res.status(404).json({ message: 'Route not found.' }));

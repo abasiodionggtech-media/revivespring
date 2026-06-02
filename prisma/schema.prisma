@@ -27,10 +27,8 @@ model User {
   isDisabled          Boolean   @default(false)
   otpCode             String?
   otpExpiresAt        DateTime?
+  onboardingData      Json?     @map("onboarding_data")
   createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-
-  prayers    Prayer[]
   journals   JournalEntry[]
   dailyGoals DailyGoal[]
   analytics  Analytics?
@@ -203,6 +201,7 @@ model Analytics {
   answeredPrayers Int      @default(0) @map("answered_prayers")
   currentStreak   Int      @default(0) @map("current_streak")
   longestStreak   Int      @default(0) @map("longest_streak")
+  visitCount      Int      @default(0) @map("visit_count")
   lastActiveDate  String?  @map("last_active_date")
   updatedAt       DateTime @updatedAt
 

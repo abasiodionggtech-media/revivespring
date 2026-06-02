@@ -32,6 +32,7 @@ router.get('/', async (req, res, next) => {
       answeredPrayers: analytics.answeredPrayers,
       currentStreak: analytics.currentStreak,
       longestStreak: analytics.longestStreak,
+      visitCount: analytics.visitCount,
       totalGoals,
       completedGoals,
       weeklyGoals,
