@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const prisma = require('../config/prisma');
-const { safeSendOtpEmail } = require('../services/email');
+const { sendOtpEmail } = require('../services/email');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
@@ -32,6 +32,19 @@ function handleValidation(req, res) {
     return true;
   }
   return false;
+}
+
+async function deliverOtp(res, email, otp, language) {
+  try {
+    await sendOtpEmail(email, otp, language);
+    return true;
+  } catch (err) {
+    console.error(`[EMAIL] Verification email failed for ${email}:`, err.message);
+    res.status(503).json({
+      message: 'We could not send your verification email. Please try again shortly.',
+    });
+    return false;
+  }
 }
 
 // ─── POST /api/auth/register ──────────────────────────────────────────────────
@@ -62,7 +75,7 @@ router.post(
             },
           });
           // Fire email in background — don't await
-          safeSendOtpEmail(email, otp, existing.language);
+          if (!await deliverOtp(res, email, otp, existing.language)) return;
           return res.status(201).json({
             message: 'Account exists but email not verified. A new code has been sent.',
             token: signToken(existing.id),
@@ -90,7 +103,7 @@ router.post(
       await prisma.analytics.create({ data: { userId: user.id } });
 
       // Fire OTP email in background — NEVER block registration on email
-      safeSendOtpEmail(email, otp, user.language);
+      if (!await deliverOtp(res, email, otp, user.language)) return;
 
       // Return immediately with token so Flutter can navigate to verify screen
       return res.status(201).json({
@@ -137,7 +150,7 @@ router.post(
             otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
           },
         });
-        safeSendOtpEmail(email, otp, user.language);
+        if (!await deliverOtp(res, email, otp, user.language)) return;
         return res.status(403).json({
           message: 'Email not verified. A verification code has been sent.',
           requiresVerification: true,
@@ -221,7 +234,7 @@ router.post(
           otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
         },
       });
-      safeSendOtpEmail(email, otp, user.language);
+      if (!await deliverOtp(res, email, otp, user.language)) return;
       return res.json({ message: 'Verification code resent.' });
     } catch (err) {
       next(err);

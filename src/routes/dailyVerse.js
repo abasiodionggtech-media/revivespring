@@ -6,9 +6,9 @@ const router = express.Router();
 
 const formatVerse = verse => ({
   id: verse.id,
-  verse: verse.verse,
+  verse: verse.verseEn,
+  verse_fr: verse.verseFr,
   reference: verse.reference,
-  language: verse.language,
 });
 
 router.get('/', async (req, res, next) => {

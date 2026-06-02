@@ -19,6 +19,7 @@ const { authenticate }      = require('./middleware/auth');
 const { authenticateAdmin } = require('./middleware/adminAuth');
 const prisma = require('./config/prisma');
 const { runDailyPrayerEmailJob } = require('./jobs/dailyPrayerEmail');
+const { verifyEmailTransport } = require('./services/email');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -99,6 +100,12 @@ app.use((err, req, res, _next) => {
     console.log('✅ Prisma connected.');
   } catch (err) {
     console.error('[DB] Connect error:', err.message);
+  }
+
+  try {
+    await verifyEmailTransport();
+  } catch (err) {
+    console.error('[EMAIL] Transport check failed:', err.message);
   }
 
   app.listen(PORT, '0.0.0.0', () => {

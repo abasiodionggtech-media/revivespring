@@ -115,3 +115,29 @@ $$;
 
 -- Done!
 -- To verify: SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';
+CREATE TABLE IF NOT EXISTS "daily_goal_templates" (
+  "id" TEXT NOT NULL,
+  "title_en" TEXT NOT NULL,
+  "title_fr" TEXT,
+  "kind" TEXT NOT NULL DEFAULT 'reflection',
+  "content_en" TEXT,
+  "content_fr" TEXT,
+  "duration_seconds" INTEGER NOT NULL DEFAULT 10,
+  "is_active" BOOLEAN NOT NULL DEFAULT true,
+  "sort_order" INTEGER NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
+  CONSTRAINT "daily_goal_templates_pkey" PRIMARY KEY ("id")
+);
+
+ALTER TABLE "daily_goals" ADD COLUMN IF NOT EXISTS "template_id" TEXT;
+ALTER TABLE "daily_goals" ADD COLUMN IF NOT EXISTS "kind" TEXT NOT NULL DEFAULT 'reflection';
+ALTER TABLE "daily_goals" ADD COLUMN IF NOT EXISTS "content" TEXT;
+ALTER TABLE "daily_goals" ADD COLUMN IF NOT EXISTS "duration_seconds" INTEGER NOT NULL DEFAULT 10;
+ALTER TABLE "daily_goals" ADD COLUMN IF NOT EXISTS "completed_at" TIMESTAMP(3);
+CREATE UNIQUE INDEX IF NOT EXISTS "daily_goals_user_id_date_template_id_key" ON "daily_goals"("user_id", "date", "template_id");
+DO $$ BEGIN
+  ALTER TABLE "daily_goals" ADD CONSTRAINT "daily_goals_template_id_fkey"
+  FOREIGN KEY ("template_id") REFERENCES "daily_goal_templates"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;

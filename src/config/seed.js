@@ -120,6 +120,43 @@ async function seed() {
   }
   console.log('  ✓ Daily goals seeded');
 
+  // Admin-managed daily goal templates assigned automatically to each user.
+  const templates = [
+    { titleEn: 'Read Psalm 23', kind: 'scripture', contentEn: 'Read Psalm 23 slowly. Notice one phrase that brings you peace.', durationSeconds: 10, sortOrder: 1 },
+    { titleEn: 'Pray for your family', kind: 'prayer', contentEn: 'Spend a quiet moment naming your family members before God.', durationSeconds: 60, sortOrder: 2 },
+    { titleEn: 'Write one gratitude note', kind: 'reflection', contentEn: 'Write down one thing you are grateful for today.', durationSeconds: 10, sortOrder: 3 },
+  ];
+  for (const template of templates) {
+    const exists = await prisma.dailyGoalTemplate.findFirst({ where: { titleEn: template.titleEn } });
+    if (!exists) await prisma.dailyGoalTemplate.create({ data: template });
+  }
+  console.log('  ✓ Daily goal templates seeded');
+
+  const verses = [
+    ['The Lord is my shepherd; I shall not want.', 'Psalm 23:1'],
+    ['I can do all things through Christ who strengthens me.', 'Philippians 4:13'],
+    ['Trust in the Lord with all your heart.', 'Proverbs 3:5'],
+    ['Be strong and courageous. Do not be afraid.', 'Joshua 1:9'],
+    ['The Lord is close to the brokenhearted.', 'Psalm 34:18'],
+  ];
+  for (const [verseEn, reference] of verses) {
+    const exists = await prisma.dailyVerse.findFirst({ where: { verseEn, reference } });
+    if (!exists) await prisma.dailyVerse.create({ data: { verseEn, reference } });
+  }
+  console.log('  ✓ Daily verses seeded');
+
+  const library = [
+    { category:'morning', titleEn:'Morning Renewal', prayerEn:'Lord, align my heart with peace, wisdom, and courage today.', verseEn:'This is the day the Lord has made.', verseRef:'Psalm 118:24' },
+    { category:'anxious', titleEn:'Anxiety Support', prayerEn:'Father, quiet my thoughts and steady my breathing in Your presence.', verseEn:'Cast all your anxiety on Him because He cares for you.', verseRef:'1 Peter 5:7' },
+    { category:'healing', titleEn:'Healing', prayerEn:'Healing Lord, restore my body, mind, and relationships with Your grace.', verseEn:'The Lord is close to the brokenhearted.', verseRef:'Psalm 34:18' },
+    { category:'family', titleEn:'Family', prayerEn:'Cover the people I love with unity, protection, and grace.', verseEn:'As for me and my house, we will serve the Lord.', verseRef:'Joshua 24:15' },
+  ];
+  for (const item of library) {
+    const exists = await prisma.prayerLibraryItem.findFirst({ where: { titleEn:item.titleEn } });
+    if (!exists) await prisma.prayerLibraryItem.create({ data:item });
+  }
+  console.log('  ✓ Prayer library seeded');
+
   console.log('\n✅  Seed complete!');
   console.log('   Demo login: demo@reviveme.app / password123');
 }

@@ -57,6 +57,12 @@
  *   GET    /api/admin/journal
  *   DELETE /api/admin/journal/:id
  *
+ * DAILY GOAL TEMPLATES
+ *   GET    /api/admin/goals
+ *   POST   /api/admin/goals
+ *   PATCH  /api/admin/goals/:id
+ *   DELETE /api/admin/goals/:id
+ *
  * DAILY EMAIL
  *   POST   /api/admin/email/test          — send test daily email to yourself
  *   POST   /api/admin/email/broadcast     — manual broadcast to all users
@@ -464,6 +470,37 @@ router.get('/journal', async (req, res, next) => {
 router.delete('/journal/:id', async (req, res, next) => {
   try { await prisma.journalEntry.delete({ where: { id: req.params.id } }); res.status(204).end(); }
   catch (err) { next(err); }
+});
+
+/* ══════════════════════════════════════════════════════════
+   DAILY GOAL TEMPLATES
+══════════════════════════════════════════════════════════ */
+router.get('/goals', async (req, res, next) => {
+  try {
+    const items = await prisma.dailyGoalTemplate.findMany({ orderBy: [{ sortOrder:'asc' }, { createdAt:'asc' }] });
+    res.json(items);
+  } catch (err) { next(err); }
+});
+
+router.post('/goals', async (req, res, next) => {
+  try {
+    const item = await prisma.dailyGoalTemplate.create({ data: req.body });
+    res.status(201).json(item);
+  } catch (err) { next(err); }
+});
+
+router.patch('/goals/:id', async (req, res, next) => {
+  try {
+    const item = await prisma.dailyGoalTemplate.update({ where: { id:req.params.id }, data:req.body });
+    res.json(item);
+  } catch (err) { next(err); }
+});
+
+router.delete('/goals/:id', async (req, res, next) => {
+  try {
+    await prisma.dailyGoalTemplate.delete({ where: { id:req.params.id } });
+    res.status(204).end();
+  } catch (err) { next(err); }
 });
 
 /* ══════════════════════════════════════════════════════════
