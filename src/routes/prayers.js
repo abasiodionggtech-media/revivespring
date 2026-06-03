@@ -83,9 +83,9 @@ prayerRouter.post('/',
 );
 
 // POST /api/prayers/complete
-// A prayer only counts after the user has kept it open for at least one minute.
+// A prayer only counts after the user has kept it open long enough to engage.
 prayerRouter.post('/complete',
-  [body('mood').notEmpty(), body('prayer_text').notEmpty(), body('elapsed_seconds').isInt({ min: 60 })],
+  [body('mood').notEmpty(), body('prayer_text').notEmpty(), body('elapsed_seconds').isInt({ min: 10 })],
   async (req, res, next) => {
     if (validate(req, res)) return;
     try {

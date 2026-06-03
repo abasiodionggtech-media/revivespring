@@ -2,12 +2,15 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const { OAuth2Client } = require('google-auth-library');
 const { body, validationResult } = require('express-validator');
 const prisma = require('../config/prisma');
 const { sendOtpEmail } = require('../services/email');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
+const googleClient = new OAuth2Client();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function generateOtp() {
@@ -46,6 +49,82 @@ async function deliverOtp(res, email, otp, language) {
     return false;
   }
 }
+
+function googleAudiences() {
+  return (process.env.GOOGLE_CLIENT_IDS || process.env.GOOGLE_WEB_CLIENT_ID || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function verifyGoogleToken(idToken) {
+  const audiences = googleAudiences();
+  if (!audiences.length) {
+    const error = new Error('Google Sign-In is not configured on the server.');
+    error.status = 500;
+    throw error;
+  }
+  const ticket = await googleClient.verifyIdToken({ idToken, audience: audiences });
+  const payload = ticket.getPayload();
+  if (!payload || !payload.email) {
+    const error = new Error('Google account did not return an email address.');
+    error.status = 401;
+    throw error;
+  }
+  if (payload.email_verified !== true) {
+    const error = new Error('Google email is not verified.');
+    error.status = 401;
+    throw error;
+  }
+  return payload;
+}
+
+// POST /api/auth/google
+router.post(
+  '/google',
+  [body('id_token').notEmpty().withMessage('Google ID token required.')],
+  async (req, res, next) => {
+    if (handleValidation(req, res)) return;
+    try {
+      const payload = await verifyGoogleToken(req.body.id_token);
+      const email = payload.email.toLowerCase();
+      const displayName = payload.name || email.split('@')[0] || 'Friend';
+      let user = await prisma.user.findUnique({ where: { email } });
+
+      if (user && user.isDisabled) {
+        return res.status(403).json({ message: 'This account has been disabled.' });
+      }
+
+      if (!user) {
+        user = await prisma.user.create({
+          data: {
+            email,
+            fullName: displayName,
+            passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12),
+            isEmailVerified: true,
+            language: req.body.language === 'fr' ? 'fr' : 'en',
+          },
+        });
+        await prisma.analytics.create({ data: { userId: user.id } });
+      } else if (!user.isEmailVerified || !user.fullName) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            isEmailVerified: true,
+            otpCode: null,
+            otpExpiresAt: null,
+            fullName: user.fullName || displayName,
+          },
+        });
+      }
+
+      return res.json({ token: signToken(user.id), user: safeUser(user) });
+    } catch (err) {
+      if (err.status) return res.status(err.status).json({ message: err.message });
+      next(err);
+    }
+  }
+);
 
 // ─── POST /api/auth/register ──────────────────────────────────────────────────
 // Creates account, fires OTP email in background (never blocks on email)
@@ -133,6 +212,9 @@ router.post(
       const user = await prisma.user.findUnique({ where: { email } });
       if (!user) {
         return res.status(401).json({ message: 'Invalid email or password.' });
+      }
+      if (user.isDisabled) {
+        return res.status(403).json({ message: 'This account has been disabled.' });
       }
 
       const match = await bcrypt.compare(password, user.passwordHash);

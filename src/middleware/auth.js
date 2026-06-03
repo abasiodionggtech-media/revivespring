@@ -15,6 +15,7 @@ async function authenticate(req, res, next) {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     const user = await prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user) return res.status(401).json({ message: 'User not found.' });
+    if (user.isDisabled) return res.status(403).json({ message: 'Account disabled.' });
     if (!user.isEmailVerified) {
       return res.status(403).json({ message: 'Email not verified.' });
     }
