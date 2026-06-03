@@ -16,6 +16,12 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_IDS
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5.4
+      - key: OPENAI_REASONING_EFFORT
+        value: medium
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT

@@ -119,12 +119,23 @@ router.get('/stats', async (req, res, next) => {
       }),
     ]);
 
+    const [dailyActiveUsers, topMoods] = await Promise.all([
+      prisma.analytics.count({ where: { lastActiveDate: today } }),
+      prisma.prayer.groupBy({
+        by: ['mood'],
+        _count: { mood: true },
+        orderBy: { _count: { mood: 'desc' } },
+        take: 5,
+      }).catch(() => []),
+    ]);
+
     res.json({
       totalUsers, verifiedUsers, unverifiedUsers: totalUsers - verifiedUsers,
       adminUsers, premiumUsers, freeUsers: totalUsers - premiumUsers,
-      disabledUsers, newUsersThisMonth, salvationUsers,
+      disabledUsers, newUsersThisMonth, salvationUsers, dailyActiveUsers,
       totalPrayers, totalJournal, totalGoals,
       conversionRate: totalUsers > 0 ? Math.round(premiumUsers / totalUsers * 100) : 0,
+      topMoods: topMoods.map((item) => ({ mood: item.mood, count: item._count.mood })),
       recentUsers,
     });
   } catch (err) { next(err); }
