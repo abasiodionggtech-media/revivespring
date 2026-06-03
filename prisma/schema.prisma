@@ -23,8 +23,11 @@ model User {
   testimony           String?
   language            String    @default("en")
   timezone            String    @default("UTC")        // for daily email timing
-  registeredHour      Int       @default(8)            // hour they registered (0-23), used for daily email
+  registeredHour      Int       @default(8)            // legacy fallback hour
+  reminderHour        Int       @default(9)  @map("reminder_hour")
+  reminderMinute      Int       @default(0)  @map("reminder_minute")
   dailyEmailEnabled   Boolean   @default(true)         // opt-in/out of daily prayer emails
+  pushNotificationsEnabled Boolean @default(true) @map("push_notifications_enabled")
   lastDailyEmailAt    DateTime?                        // last time daily email was sent
   isEmailVerified     Boolean   @default(false)
   isDisabled          Boolean   @default(false)
