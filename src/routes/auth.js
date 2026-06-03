@@ -25,7 +25,10 @@ function signToken(userId) {
 
 function safeUser(user) {
   const { passwordHash, otpCode, otpExpiresAt, ...safe } = user;
-  return safe;
+  return {
+    ...safe,
+    hasCompletedOnboarding: !!(safe.onboardingData && typeof safe.onboardingData === 'object' && safe.onboardingData.completedAt),
+  };
 }
 
 function handleValidation(req, res) {
@@ -89,10 +92,18 @@ router.post(
       const payload = await verifyGoogleToken(req.body.id_token);
       const email = payload.email.toLowerCase();
       const displayName = payload.name || email.split('@')[0] || 'Friend';
+      const profileImageUrl = payload.picture || null;
+      const googleSub = payload.sub || null;
       let user = await prisma.user.findUnique({ where: { email } });
 
       if (user && user.isDisabled) {
         return res.status(403).json({ message: 'This account has been disabled.' });
+      }
+
+      if (user && user.authProvider === 'email') {
+        return res.status(409).json({
+          message: 'This email is already registered with email and password. Sign in with email instead.',
+        });
       }
 
       if (!user) {
@@ -101,19 +112,28 @@ router.post(
             email,
             fullName: displayName,
             passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12),
+            authProvider: 'google',
+            googleSub,
+            profileImageUrl,
             isEmailVerified: true,
             language: req.body.language === 'fr' ? 'fr' : 'en',
           },
         });
         await prisma.analytics.create({ data: { userId: user.id } });
-      } else if (!user.isEmailVerified || !user.fullName) {
+      } else if (user.googleSub && googleSub && user.googleSub !== googleSub) {
+        return res.status(409).json({ message: 'This Google account does not match the existing profile.' });
+      } else {
         user = await prisma.user.update({
           where: { id: user.id },
           data: {
+            authProvider: 'google',
             isEmailVerified: true,
             otpCode: null,
             otpExpiresAt: null,
             fullName: user.fullName || displayName,
+            googleSub: user.googleSub || googleSub,
+            profileImageUrl,
+            language: user.language || (req.body.language === 'fr' ? 'fr' : 'en'),
           },
         });
       }
@@ -143,6 +163,11 @@ router.post(
 
       const existing = await prisma.user.findUnique({ where: { email } });
       if (existing) {
+        if (existing.authProvider === 'google') {
+          return res.status(409).json({
+            message: 'This email is already linked to Google Sign-In. Use Google to continue.',
+          });
+        }
         if (!existing.isEmailVerified) {
           // Already registered but not verified — resend OTP and return same response
           const otp = generateOtp();
@@ -172,6 +197,7 @@ router.post(
         data: {
           email,
           passwordHash,
+          authProvider: 'email',
           fullName: full_name,
           otpCode: otp,
           otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
@@ -215,6 +241,9 @@ router.post(
       }
       if (user.isDisabled) {
         return res.status(403).json({ message: 'This account has been disabled.' });
+      }
+      if (user.authProvider === 'google') {
+        return res.status(409).json({ message: 'This account uses Google Sign-In. Continue with Google instead.' });
       }
 
       const match = await bcrypt.compare(password, user.passwordHash);
@@ -380,6 +409,9 @@ router.post(
     try {
       const { currentPassword, newPassword } = req.body;
       const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+      if (user.authProvider === 'google') {
+        return res.status(400).json({ message: 'This account uses Google Sign-In and does not have a password to change.' });
+      }
       const match = await bcrypt.compare(currentPassword, user.passwordHash);
       if (!match) return res.status(400).json({ message: 'Current password is incorrect.' });
 

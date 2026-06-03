@@ -13,6 +13,9 @@ model User {
   email               String    @unique
   passwordHash        String
   fullName            String?   @map("full_name")
+  authProvider        String?   @map("auth_provider")
+  googleSub           String?   @unique @map("google_sub")
+  profileImageUrl     String?   @map("profile_image_url")
   role                String    @default("user")      // "user" | "admin"
   subscriptionStatus  String    @default("free")
   salvationDate       String?

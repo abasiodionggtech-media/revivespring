@@ -115,7 +115,7 @@ router.get('/stats', async (req, res, next) => {
       prisma.user.count({ where: { salvationPrayedAt: { not: null } } }),
       prisma.user.findMany({
         orderBy: { createdAt: 'desc' }, take: 5,
-        select: { id:true, email:true, fullName:true, role:true, subscriptionStatus:true, isEmailVerified:true, createdAt:true },
+        select: { id:true, email:true, fullName:true, role:true, subscriptionStatus:true, isEmailVerified:true, authProvider:true, profileImageUrl:true, createdAt:true },
       }),
     ]);
 
@@ -163,7 +163,7 @@ router.get('/users', async (req, res, next) => {
         select: {
           id:true, email:true, fullName:true, role:true, subscriptionStatus:true,
           isEmailVerified:true, isDisabled:true, language:true, dailyEmailEnabled:true,
-          salvationPrayedAt:true, createdAt:true, updatedAt:true,
+          authProvider:true, profileImageUrl:true, salvationPrayedAt:true, createdAt:true, updatedAt:true,
           _count: { select: { prayers:true, journals:true, dailyGoals:true } },
         },
       }),
@@ -185,15 +185,17 @@ router.get('/users/:id', async (req, res, next) => {
 });
 
 router.patch('/users/:id',
-  [ body('full_name').optional().trim().notEmpty(), body('email').optional().isEmail().normalizeEmail(), body('language').optional().isIn(['en','fr']), body('password').optional().isLength({ min: 6 }) ],
+  [ body('full_name').optional().trim().notEmpty(), body('email').optional().isEmail().normalizeEmail(), body('language').optional().isIn(['en','fr']), body('password').optional().isLength({ min: 6 }), body('authProvider').optional().isIn(['email', 'google']) ],
   async (req, res, next) => {
     if (!ok(req, res)) return;
     try {
-      const { full_name, email, language, password, salvationDate, testimony, dailyEmailEnabled } = req.body;
+      const { full_name, email, language, password, salvationDate, testimony, dailyEmailEnabled, authProvider, profileImageUrl } = req.body;
       const data = {};
       if (full_name !== undefined)          data.fullName           = full_name;
       if (email    !== undefined)           data.email              = email;
       if (language !== undefined)           data.language           = language;
+      if (authProvider !== undefined)       data.authProvider       = authProvider;
+      if (profileImageUrl !== undefined)    data.profileImageUrl    = profileImageUrl;
       if (salvationDate !== undefined)      data.salvationDate      = salvationDate;
       if (testimony !== undefined)          data.testimony          = testimony;
       if (dailyEmailEnabled !== undefined)  data.dailyEmailEnabled  = Boolean(dailyEmailEnabled);
