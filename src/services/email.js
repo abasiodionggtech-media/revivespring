@@ -207,9 +207,49 @@ async function sendDailyPrayerEmail(toEmail, name, prayer, language) {
   return sendMail({ to: toEmail, subject: email.subject, html: email.html });
 }
 
+async function sendSecurityAlertEmail(toEmail, name, details = {}) {
+  const safeName = escapeHtml(name || 'Friend');
+  const safeClient = escapeHtml(details.client || 'a device');
+  const safeWhen = escapeHtml(details.when || new Date().toLocaleString());
+  const safeIp = escapeHtml(details.ip || 'Unknown');
+  const html = `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f5f9f7;font-family:Arial,sans-serif;color:#173a33;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px;background:#f5f9f7;"><tr><td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;overflow:hidden;background:#ffffff;border-radius:14px;">
+        <tr><td style="padding:28px 36px;text-align:center;background:#0e4b3e;"><h1 style="margin:0;color:#ffffff;font-size:22px;letter-spacing:2px;">REVIVESPRING</h1></td></tr>
+        <tr><td style="padding:30px 36px;"><h2 style="margin:0 0 10px;">New sign-in to your account</h2>
+          <p>Hello ${safeName}, your ReviveSpring account was signed in on ${safeClient}.</p>
+          <p style="padding:14px 16px;background:#f5f9f7;border-left:4px solid #3f8f48;"><strong>Time:</strong> ${safeWhen}<br/><strong>IP:</strong> ${safeIp}</p>
+          <p style="color:#6d7f79;font-size:13px;">If this was you, no action is needed. If this was not you, please change your password and contact customer care.</p>
+        </td></tr>
+      </table>
+    </td></tr></table>
+  </body></html>`;
+  return sendMail({ to: toEmail, subject: 'New ReviveSpring account sign-in', html });
+}
+
+async function sendSupportReplyEmail(toEmail, name, ticket, reply) {
+  const safeName = escapeHtml(name || 'Friend');
+  const safeSubject = escapeHtml(ticket.subject || 'Customer care message');
+  const safeReply = escapeHtml(reply);
+  const html = `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f5f9f7;font-family:Arial,sans-serif;color:#173a33;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px;background:#f5f9f7;"><tr><td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;overflow:hidden;background:#ffffff;border-radius:14px;">
+        <tr><td style="padding:28px 36px;text-align:center;background:#0e4b3e;"><h1 style="margin:0;color:#ffffff;font-size:22px;letter-spacing:2px;">REVIVESPRING CARE</h1></td></tr>
+        <tr><td style="padding:30px 36px;"><p>Hello ${safeName},</p><h2 style="margin:0 0 10px;">We replied to: ${safeSubject}</h2>
+          <p style="white-space:pre-line;line-height:1.7;padding:14px 16px;background:#f5f9f7;border-left:4px solid #3f8f48;">${safeReply}</p>
+          <p style="color:#6d7f79;font-size:13px;">Open ReviveSpring notifications or Customer Care to view this response.</p>
+        </td></tr>
+      </table>
+    </td></tr></table>
+  </body></html>`;
+  return sendMail({ to: toEmail, subject: 'ReviveSpring Care replied to your message', html });
+}
+
 module.exports = {
   sendOtpEmail,
   safeSendOtpEmail,
   sendDailyPrayerEmail,
+  sendSecurityAlertEmail,
+  sendSupportReplyEmail,
   verifyEmailTransport,
 };

@@ -91,6 +91,14 @@ prayerRouter.post('/complete',
     try {
       const { mood, encouragement, bible_verse, bible_reference, prayer_text, action_step, language } = req.body;
       const createdDate = new Date().toISOString().split('T')[0];
+      const existing = await prisma.prayer.findFirst({
+        where: { userId: req.user.id, mood, prayerText: prayer_text },
+      });
+
+      if (existing) {
+        return res.json({ recorded: false, duplicate: true, id: existing.id, created_date: existing.createdDate });
+      }
+
       const prayer = await prisma.prayer.create({
         data: {
           userId: req.user.id, mood, encouragement, bibleVerse: bible_verse,

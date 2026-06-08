@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { OAuth2Client } = require('google-auth-library');
 const { body, validationResult } = require('express-validator');
 const prisma = require('../config/prisma');
-const { sendOtpEmail } = require('../services/email');
+const { sendOtpEmail, sendSecurityAlertEmail } = require('../services/email');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
@@ -82,6 +82,66 @@ async function verifyGoogleToken(idToken) {
   return payload;
 }
 
+function clientLabel(client) {
+  if (client === 'mobile') return 'the mobile app';
+  if (client === 'web') return 'the web app';
+  return client || 'a device';
+}
+
+async function recordSignInEvent(req, user, client = 'web') {
+  try {
+    const normalizedClient = ['web', 'mobile'].includes(client) ? client : 'web';
+    const otherSession = await prisma.accountSession.findFirst({
+      where: { userId: user.id, client: { not: normalizedClient } },
+      orderBy: { lastSeenAt: 'desc' },
+    });
+    const now = new Date();
+    const title = otherSession ? 'Account signed in on another device' : 'New account sign-in';
+    const body = otherSession
+      ? `Your account is now signed in on ${clientLabel(normalizedClient)} and was already active on ${clientLabel(otherSession.client)}.`
+      : `Your account was signed in on ${clientLabel(normalizedClient)}.`;
+
+    await prisma.notification.create({
+      data: {
+        userId: user.id,
+        type: 'security',
+        title,
+        body,
+        metadata: {
+          client: normalizedClient,
+          otherClient: otherSession?.client || null,
+          ip: req.ip,
+          userAgent: req.get('user-agent') || null,
+        },
+      },
+    });
+
+    await prisma.accountSession.upsert({
+      where: { userId_client: { userId: user.id, client: normalizedClient } },
+      create: {
+        userId: user.id,
+        client: normalizedClient,
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent') || null,
+        lastSeenAt: now,
+      },
+      update: {
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent') || null,
+        lastSeenAt: now,
+      },
+    });
+
+    await sendSecurityAlertEmail(user.email, user.fullName, {
+      client: clientLabel(normalizedClient),
+      when: now.toLocaleString(),
+      ip: req.ip,
+    });
+  } catch (err) {
+    console.error(`[SECURITY] Sign-in notification failed for ${user.email}:`, err.message);
+  }
+}
+
 // POST /api/auth/google
 router.post(
   '/google',
@@ -138,6 +198,7 @@ router.post(
         });
       }
 
+      await recordSignInEvent(req, user, req.body.client || 'web');
       return res.json({ token: signToken(user.id), user: safeUser(user) });
     } catch (err) {
       if (err.status) return res.status(err.status).json({ message: err.message });
@@ -270,6 +331,7 @@ router.post(
         });
       }
 
+      await recordSignInEvent(req, user, req.body.client || 'web');
       return res.json({
         token: signToken(user.id),
         user: safeUser(user),

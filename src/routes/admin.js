@@ -73,7 +73,7 @@ const bcrypt  = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const prisma  = require('../config/prisma');
 const { authenticateAdmin } = require('../middleware/adminAuth');
-const { sendDailyPrayerEmail } = require('../services/email');
+const { sendDailyPrayerEmail, sendSupportReplyEmail } = require('../services/email');
 
 const router = express.Router();
 router.use(authenticateAdmin);
@@ -579,5 +579,71 @@ router.post('/email/broadcast', async (req, res, next) => {
     res.json({ message: 'Broadcast complete.', sent, failed, total: users.length });
   } catch (err) { next(err); }
 });
+
+router.get('/support/tickets', async (req, res, next) => {
+  try {
+    const status = req.query.status;
+    const where = status ? { status } : {};
+    const tickets = await prisma.supportTicket.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      take: Math.min(100, Number(req.query.limit || 50)),
+      include: { user: { select: { id: true, email: true, fullName: true, subscriptionStatus: true, language: true } } },
+    });
+    res.json({ tickets });
+  } catch (err) { next(err); }
+});
+
+router.post('/support/tickets/:id/reply',
+  [body('message').trim().isLength({ min: 2 }).withMessage('Reply message is required.')],
+  async (req, res, next) => {
+    if (!ok(req, res)) return;
+    try {
+      const ticket = await prisma.supportTicket.findUnique({
+        where: { id: req.params.id },
+        include: { user: { select: { id: true, email: true, fullName: true } } },
+      });
+      if (!ticket) return res.status(404).json({ message: 'Support ticket not found.' });
+
+      const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
+      messages.push({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        role: 'admin',
+        senderName: req.user.fullName || 'ReviveSpring Care',
+        senderEmail: req.user.email,
+        body: req.body.message,
+        createdAt: new Date().toISOString(),
+      });
+
+      const updated = await prisma.supportTicket.update({
+        where: { id: ticket.id },
+        data: {
+          messages,
+          status: req.body.status || 'answered',
+          lastReplyAt: new Date(),
+        },
+        include: { user: { select: { id: true, email: true, fullName: true, subscriptionStatus: true, language: true } } },
+      });
+
+      await prisma.notification.create({
+        data: {
+          userId: ticket.userId,
+          type: 'support_reply',
+          title: 'Customer care replied',
+          body: req.body.message,
+          metadata: { ticketId: ticket.id, subject: ticket.subject },
+        },
+      });
+
+      try {
+        await sendSupportReplyEmail(ticket.user.email, ticket.user.fullName, ticket, req.body.message);
+      } catch (err) {
+        console.error(`[EMAIL] Support reply email failed for ${ticket.user.email}:`, err.message);
+      }
+
+      res.json(updated);
+    } catch (err) { next(err); }
+  }
+);
 
 module.exports = router;

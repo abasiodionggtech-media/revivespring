@@ -15,6 +15,8 @@ const onboardingRoutes= require('./routes/onboarding');
 const libraryRoutes   = require('./routes/library');
 const dailyVerseRoutes= require('./routes/dailyVerse');
 const adminRoutes     = require('./routes/admin');
+const notificationRoutes = require('./routes/notifications');
+const supportRoutes   = require('./routes/support');
 const { authenticate }      = require('./middleware/auth');
 const { authenticateAdmin } = require('./middleware/adminAuth');
 const prisma = require('./config/prisma');
@@ -77,6 +79,8 @@ app.use('/api/analytics', authenticate, analyticsRoutes);
 app.use('/api/onboarding', authenticate, onboardingRoutes);
 app.use('/api/library',   authenticate, libraryRoutes);
 app.use('/api/daily-verse', authenticate, dailyVerseRoutes);
+app.use('/api/notifications', authenticate, notificationRoutes);
+app.use('/api/support',   authenticate, supportRoutes);
 app.use('/api/admin',     adminRoutes);
 
 // 404
