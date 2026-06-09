@@ -11,8 +11,10 @@ const { authenticate } = require('../middleware/auth');
 const {
   createNotification,
   findOtherAccountSession,
+  listUserDeviceTokens,
   upsertAccountSession,
 } = require('../services/supportStorage');
+const { sendPushToTokens } = require('../services/push');
 
 const router = express.Router();
 const googleClient = new OAuth2Client();
@@ -65,6 +67,17 @@ function googleAudiences() {
     .filter(Boolean);
 }
 
+function decodeJwtPayloadUnsafe(idToken) {
+  try {
+    const [, payload] = idToken.split('.');
+    if (!payload) return {};
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(Buffer.from(normalized, 'base64').toString('utf8'));
+  } catch {
+    return {};
+  }
+}
+
 async function verifyGoogleToken(idToken) {
   const audiences = googleAudiences();
   if (!audiences.length) {
@@ -72,7 +85,19 @@ async function verifyGoogleToken(idToken) {
     error.status = 500;
     throw error;
   }
-  const ticket = await googleClient.verifyIdToken({ idToken, audience: audiences });
+  let ticket;
+  try {
+    ticket = await googleClient.verifyIdToken({ idToken, audience: audiences });
+  } catch (err) {
+    const payload = decodeJwtPayloadUnsafe(idToken);
+    console.error('[AUTH] Google audience mismatch', {
+      tokenAudience: payload.aud || null,
+      configuredAudiences: audiences,
+    });
+    const error = new Error('Google Sign-In is using a different OAuth client ID than the backend. Update Render GOOGLE_WEB_CLIENT_ID/GOOGLE_CLIENT_IDS and rebuild the mobile app with env/release.json.');
+    error.status = 401;
+    throw error;
+  }
   const payload = ticket.getPayload();
   if (!payload || !payload.email) {
     const error = new Error('Google account did not return an email address.');
@@ -103,18 +128,35 @@ async function recordSignInEvent(req, user, client = 'web') {
       ? `Your account is now signed in on ${clientLabel(normalizedClient)} and was already active on ${clientLabel(otherSession.client)}.`
       : `Your account was signed in on ${clientLabel(normalizedClient)}.`;
 
-    await createNotification({
-      userId: user.id,
-      type: 'security',
-      title,
-      body,
-      metadata: {
-        client: normalizedClient,
-        otherClient: otherSession?.client || null,
-        ip: req.ip,
-        userAgent: req.get('user-agent') || null,
-      },
-    });
+    if (otherSession) {
+      await createNotification({
+        userId: user.id,
+        type: 'security',
+        title,
+        body,
+        metadata: {
+          client: normalizedClient,
+          otherClient: otherSession.client,
+          ip: req.ip,
+          userAgent: req.get('user-agent') || null,
+        },
+      });
+
+      try {
+        const tokens = await listUserDeviceTokens(user.id);
+        await sendPushToTokens(tokens, {
+          title,
+          body,
+          data: {
+            type: 'security',
+            client: normalizedClient,
+            otherClient: otherSession.client,
+          },
+        });
+      } catch (err) {
+        console.error(`[PUSH] Sign-in alert failed for ${user.email}:`, err.message);
+      }
+    }
 
     await upsertAccountSession({
       userId: user.id,
@@ -125,6 +167,7 @@ async function recordSignInEvent(req, user, client = 'web') {
 
     await sendSecurityAlertEmail(user.email, user.fullName, {
       client: clientLabel(normalizedClient),
+      otherClient: otherSession ? clientLabel(otherSession.client) : null,
       when: now.toLocaleString(),
       ip: req.ip,
     });

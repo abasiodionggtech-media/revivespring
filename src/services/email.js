@@ -210,14 +210,19 @@ async function sendDailyPrayerEmail(toEmail, name, prayer, language) {
 async function sendSecurityAlertEmail(toEmail, name, details = {}) {
   const safeName = escapeHtml(name || 'Friend');
   const safeClient = escapeHtml(details.client || 'a device');
+  const safeOtherClient = details.otherClient ? escapeHtml(details.otherClient) : null;
   const safeWhen = escapeHtml(details.when || new Date().toLocaleString());
   const safeIp = escapeHtml(details.ip || 'Unknown');
+  const otherClientLine = safeOtherClient
+    ? `<p style="padding:14px 16px;background:#fff8ec;border-left:4px solid #d8963d;"><strong>Security note:</strong> This account was already active on ${safeOtherClient}.</p>`
+    : '';
   const html = `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f5f9f7;font-family:Arial,sans-serif;color:#173a33;">
     <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px;background:#f5f9f7;"><tr><td align="center">
       <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;overflow:hidden;background:#ffffff;border-radius:14px;">
         <tr><td style="padding:28px 36px;text-align:center;background:#0e4b3e;"><h1 style="margin:0;color:#ffffff;font-size:22px;letter-spacing:2px;">REVIVESPRING</h1></td></tr>
         <tr><td style="padding:30px 36px;"><h2 style="margin:0 0 10px;">New sign-in to your account</h2>
           <p>Hello ${safeName}, your ReviveSpring account was signed in on ${safeClient}.</p>
+          ${otherClientLine}
           <p style="padding:14px 16px;background:#f5f9f7;border-left:4px solid #3f8f48;"><strong>Time:</strong> ${safeWhen}<br/><strong>IP:</strong> ${safeIp}</p>
           <p style="color:#6d7f79;font-size:13px;">If this was you, no action is needed. If this was not you, please change your password and contact customer care.</p>
         </td></tr>

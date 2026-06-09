@@ -91,6 +91,16 @@ async function ensureSupportTables() {
         )
       `);
       await prisma.$executeRawUnsafe(`
+        ALTER TABLE "support_tickets"
+        ALTER COLUMN "created_at" SET DEFAULT CURRENT_TIMESTAMP,
+        ALTER COLUMN "updated_at" SET DEFAULT CURRENT_TIMESTAMP
+      `);
+      await prisma.$executeRawUnsafe(`
+        UPDATE "support_tickets"
+        SET "created_at" = COALESCE("created_at", CURRENT_TIMESTAMP),
+            "updated_at" = COALESCE("updated_at", CURRENT_TIMESTAMP)
+      `);
+      await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS "support_tickets_user_id_status_updated_at_idx"
         ON "support_tickets"("user_id", "status", "updated_at")
       `);
@@ -112,6 +122,20 @@ async function ensureSupportTables() {
       await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS "account_sessions_user_id_last_seen_at_idx"
         ON "account_sessions"("user_id", "last_seen_at")
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "device_tokens" (
+          "id" TEXT PRIMARY KEY,
+          "user_id" TEXT NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+          "token" TEXT NOT NULL UNIQUE,
+          "platform" TEXT NOT NULL DEFAULT 'android',
+          "last_seen_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS "device_tokens_user_id_last_seen_at_idx"
+        ON "device_tokens"("user_id", "last_seen_at")
       `);
     })();
   }
@@ -150,8 +174,8 @@ async function createSupportTicket({ user, subject, message }) {
     createdAt: new Date().toISOString(),
   }];
   const rows = await prisma.$queryRawUnsafe(
-    `INSERT INTO "support_tickets" ("id", "user_id", "subject", "messages")
-     VALUES ($1, $2, $3, $4::jsonb)
+    `INSERT INTO "support_tickets" ("id", "user_id", "subject", "messages", "created_at", "updated_at")
+     VALUES ($1, $2, $3, $4::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
      RETURNING *`,
     ticketId,
     user.id,
@@ -331,6 +355,37 @@ async function upsertAccountSession({ userId, client, ipAddress, userAgent }) {
   return rows[0] || null;
 }
 
+async function upsertDeviceToken({ userId, token, platform = 'android' }) {
+  await ensureSupportTables();
+  const rows = await prisma.$queryRawUnsafe(
+    `INSERT INTO "device_tokens" ("id", "user_id", "token", "platform", "last_seen_at")
+     VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+     ON CONFLICT ("token")
+     DO UPDATE SET
+       "user_id" = EXCLUDED."user_id",
+       "platform" = EXCLUDED."platform",
+       "last_seen_at" = CURRENT_TIMESTAMP
+     RETURNING *`,
+    makeId(),
+    userId,
+    token,
+    platform
+  );
+  return rows[0] || null;
+}
+
+async function listUserDeviceTokens(userId) {
+  await ensureSupportTables();
+  const rows = await prisma.$queryRawUnsafe(
+    `SELECT "token" FROM "device_tokens"
+     WHERE "user_id" = $1
+     ORDER BY "last_seen_at" DESC
+     LIMIT 20`,
+    userId
+  );
+  return rows.map((row) => row.token).filter(Boolean);
+}
+
 module.exports = {
   addAdminTicketReply,
   addUserTicketMessage,
@@ -347,4 +402,6 @@ module.exports = {
   markNotificationRead,
   findOtherAccountSession,
   upsertAccountSession,
+  listUserDeviceTokens,
+  upsertDeviceToken,
 };

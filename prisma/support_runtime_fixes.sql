@@ -21,3 +21,15 @@ SET "created_at" = COALESCE("created_at", CURRENT_TIMESTAMP),
 
 CREATE INDEX IF NOT EXISTS "support_tickets_user_id_status_updated_at_idx"
 ON "support_tickets"("user_id", "status", "updated_at");
+
+CREATE TABLE IF NOT EXISTS "device_tokens" (
+  "id" TEXT PRIMARY KEY,
+  "user_id" TEXT NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
+  "token" TEXT NOT NULL UNIQUE,
+  "platform" TEXT NOT NULL DEFAULT 'android',
+  "last_seen_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS "device_tokens_user_id_last_seen_at_idx"
+ON "device_tokens"("user_id", "last_seen_at");

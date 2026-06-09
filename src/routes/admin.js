@@ -78,8 +78,10 @@ const {
   addAdminTicketReply,
   createNotification,
   findAdminTicket,
+  listUserDeviceTokens,
   listAdminTickets,
 } = require('../services/supportStorage');
+const { sendPushToTokens } = require('../services/push');
 
 const router = express.Router();
 router.use(authenticateAdmin);
@@ -618,6 +620,17 @@ router.post('/support/tickets/:id/reply',
         body: req.body.message,
         metadata: { ticketId: ticket.id, subject: ticket.subject },
       });
+
+      try {
+        const tokens = await listUserDeviceTokens(ticket.userId);
+        await sendPushToTokens(tokens, {
+          title: 'Customer care replied',
+          body: req.body.message,
+          data: { type: 'support_reply', ticketId: ticket.id, subject: ticket.subject },
+        });
+      } catch (err) {
+        console.error(`[PUSH] Support reply push failed for ${ticket.user.email}:`, err.message);
+      }
 
       try {
         await sendSupportReplyEmail(ticket.user.email, ticket.user.fullName, ticket, req.body.message);

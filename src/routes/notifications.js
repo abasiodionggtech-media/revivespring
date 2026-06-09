@@ -1,13 +1,24 @@
 const express = require('express');
+const { body, validationResult } = require('express-validator');
 
 const {
   countUnreadNotifications,
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
+  upsertDeviceToken,
 } = require('../services/supportStorage');
 
 const router = express.Router();
+
+function ok(req, res) {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.status(422).json({ message: errors.array()[0].msg });
+    return false;
+  }
+  return true;
+}
 
 function mapNotification(item) {
   return {
@@ -49,5 +60,25 @@ router.post('/read-all', async (req, res, next) => {
     next(err);
   }
 });
+
+router.post('/device-token',
+  [
+    body('token').trim().isLength({ min: 20 }).withMessage('Device token is required.'),
+    body('platform').optional().trim().isLength({ min: 2 }),
+  ],
+  async (req, res, next) => {
+    if (!ok(req, res)) return;
+    try {
+      await upsertDeviceToken({
+        userId: req.user.id,
+        token: req.body.token,
+        platform: req.body.platform || 'android',
+      });
+      res.json({ message: 'Device token registered.' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 module.exports = router;

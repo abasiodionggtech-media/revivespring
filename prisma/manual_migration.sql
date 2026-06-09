@@ -187,6 +187,18 @@ CREATE TABLE IF NOT EXISTS "account_sessions" (
 
 CREATE UNIQUE INDEX IF NOT EXISTS "account_sessions_user_id_client_key" ON "account_sessions"("user_id", "client");
 CREATE INDEX IF NOT EXISTS "account_sessions_user_id_last_seen_at_idx" ON "account_sessions"("user_id", "last_seen_at");
+
+CREATE TABLE IF NOT EXISTS "device_tokens" (
+  "id" TEXT PRIMARY KEY,
+  "user_id" TEXT NOT NULL,
+  "token" TEXT NOT NULL UNIQUE,
+  "platform" TEXT NOT NULL DEFAULT 'android',
+  "last_seen_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "device_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS "device_tokens_user_id_last_seen_at_idx" ON "device_tokens"("user_id", "last_seen_at");
 CREATE UNIQUE INDEX IF NOT EXISTS "daily_goals_user_id_date_template_id_key" ON "daily_goals"("user_id", "date", "template_id");
 DO $$ BEGIN
   ALTER TABLE "daily_goals" ADD CONSTRAINT "daily_goals_template_id_fkey"
