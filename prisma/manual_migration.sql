@@ -165,6 +165,15 @@ CREATE TABLE IF NOT EXISTS "support_tickets" (
 
 CREATE INDEX IF NOT EXISTS "support_tickets_user_id_status_updated_at_idx" ON "support_tickets"("user_id", "status", "updated_at");
 
+-- Repair older support_tickets tables that were created before updated_at had a default.
+ALTER TABLE "support_tickets"
+  ALTER COLUMN "created_at" SET DEFAULT CURRENT_TIMESTAMP,
+  ALTER COLUMN "updated_at" SET DEFAULT CURRENT_TIMESTAMP;
+
+UPDATE "support_tickets"
+SET "created_at" = COALESCE("created_at", CURRENT_TIMESTAMP),
+    "updated_at" = COALESCE("updated_at", CURRENT_TIMESTAMP);
+
 CREATE TABLE IF NOT EXISTS "account_sessions" (
   "id" TEXT PRIMARY KEY,
   "user_id" TEXT NOT NULL,
