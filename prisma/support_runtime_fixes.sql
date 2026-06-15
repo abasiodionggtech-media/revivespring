@@ -33,3 +33,23 @@ CREATE TABLE IF NOT EXISTS "device_tokens" (
 
 CREATE INDEX IF NOT EXISTS "device_tokens_user_id_last_seen_at_idx"
 ON "device_tokens"("user_id", "last_seen_at");
+
+-- Admin dashboard compatibility for older/newer users table shapes.
+ALTER TABLE "users"
+  ADD COLUMN IF NOT EXISTS "subscriptionStatus" TEXT NOT NULL DEFAULT 'free';
+
+UPDATE "users"
+SET "subscriptionStatus" = COALESCE("subscriptionStatus", 'free');
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'users'
+      AND column_name = 'subscription_status'
+  ) THEN
+    UPDATE "users"
+    SET "subscriptionStatus" = COALESCE(NULLIF("subscriptionStatus", 'free'), "subscription_status", 'free');
+  END IF;
+END $$;

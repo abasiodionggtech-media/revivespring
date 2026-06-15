@@ -26,7 +26,7 @@ function mapTicket(row) {
         id: row.user_id,
         email: row.email,
         fullName: row.full_name,
-        subscriptionStatus: row.subscription_status,
+        subscriptionStatus: row.subscription_status || row.subscriptionStatus || 'free',
         language: row.language,
       }
     : undefined;
@@ -56,6 +56,32 @@ function mapNotification(row) {
     readAt: row.read_at,
     createdAt: row.created_at,
   };
+}
+
+let userColumnNamesPromise;
+
+async function getUserColumnNames() {
+  if (!userColumnNamesPromise) {
+    userColumnNamesPromise = prisma.$queryRawUnsafe(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'users'
+    `).then((rows) => new Set(rows.map((row) => row.column_name)));
+  }
+  return userColumnNamesPromise;
+}
+
+async function userColumnSql(columnNames, preferred, fallback, alias) {
+  if (columnNames.has(preferred)) return `u."${preferred}" AS ${alias}`;
+  if (columnNames.has(fallback)) return `u."${fallback}" AS ${alias}`;
+  return `NULL AS ${alias}`;
+}
+
+function userSubscriptionSql(columnNames) {
+  if (columnNames.has('subscription_status')) return `u."subscription_status" AS subscription_status`;
+  if (columnNames.has('subscriptionStatus')) return `u."subscriptionStatus" AS subscription_status`;
+  if (columnNames.has('plan')) return `u."plan" AS subscription_status`;
+  return `'free' AS subscription_status`;
 }
 
 async function ensureSupportTables() {
@@ -212,8 +238,15 @@ async function addUserTicketMessage({ ticket, user, message }) {
 async function listAdminTickets({ status, limit = 50 }) {
   await ensureSupportTables();
   const safeLimit = Math.min(100, Number(limit || 50));
+  const userColumns = await getUserColumnNames();
+  const fullNameSql = await userColumnSql(userColumns, 'full_name', 'fullName', 'full_name');
+  const subscriptionSql = userSubscriptionSql(userColumns);
   const baseSelect = `
-    SELECT st.*, u.email, u.full_name, u.subscription_status, u.language
+    SELECT st.*,
+      u.email,
+      ${fullNameSql},
+      ${subscriptionSql},
+      u.language
     FROM "support_tickets" st
     INNER JOIN "users" u ON u.id = st.user_id
   `;
@@ -225,8 +258,15 @@ async function listAdminTickets({ status, limit = 50 }) {
 
 async function findAdminTicket(ticketId) {
   await ensureSupportTables();
+  const userColumns = await getUserColumnNames();
+  const fullNameSql = await userColumnSql(userColumns, 'full_name', 'fullName', 'full_name');
+  const subscriptionSql = userSubscriptionSql(userColumns);
   const rows = await prisma.$queryRawUnsafe(
-    `SELECT st.*, u.email, u.full_name, u.subscription_status, u.language
+    `SELECT st.*,
+       u.email,
+       ${fullNameSql},
+       ${subscriptionSql},
+       u.language
      FROM "support_tickets" st
      INNER JOIN "users" u ON u.id = st.user_id
      WHERE st.id = $1

@@ -93,6 +93,27 @@ function ok(req, res) {
   if (!errors.isEmpty()) { res.status(422).json({ message: errors.array()[0].msg }); return false; }
   return true;
 }
+
+function userSelect() {
+  const fields = prisma.user?.fields || {};
+  const select = {
+    id:true,
+    email:true,
+    fullName:true,
+    role:true,
+    subscriptionStatus:true,
+    isEmailVerified:true,
+    isDisabled:true,
+    language:true,
+    createdAt:true,
+    salvationPrayedAt:true,
+    _count: { select: { prayers:true, journals:true, dailyGoals:true } },
+  };
+  for (const optional of ['updatedAt', 'dailyEmailEnabled', 'authProvider', 'profileImageUrl']) {
+    if (fields[optional]) select[optional] = true;
+  }
+  return select;
+}
 function safe(user) {
   const { passwordHash, otpCode, otpExpiresAt, ...s } = user; return s;
 }
@@ -175,12 +196,7 @@ router.get('/users', async (req, res, next) => {
         prisma.user.findMany({
           where, orderBy: { createdAt: 'desc' },
           skip: (page-1)*limit, take: limit,
-          select: {
-            id:true, email:true, fullName:true, role:true, subscriptionStatus:true,
-            isEmailVerified:true, isDisabled:true, language:true, dailyEmailEnabled:true,
-            authProvider:true, profileImageUrl:true, salvationPrayedAt:true, createdAt:true, updatedAt:true,
-            _count: { select: { prayers:true, journals:true, dailyGoals:true } },
-          },
+          select: userSelect(),
         }),
         prisma.user.count({ where }),
       ]);
@@ -189,11 +205,7 @@ router.get('/users', async (req, res, next) => {
         prisma.user.findMany({
           where, orderBy: { createdAt: 'desc' },
           skip: (page-1)*limit, take: limit,
-          select: {
-            id:true, email:true, fullName:true, role:true, subscriptionStatus:true,
-            isEmailVerified:true, isDisabled:true, language:true, createdAt:true, updatedAt:true, salvationPrayedAt:true,
-            _count: { select: { prayers:true, journals:true, dailyGoals:true } },
-          },
+          select: userSelect(),
         }),
         prisma.user.count({ where }),
       ]);
