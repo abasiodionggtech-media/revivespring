@@ -73,9 +73,10 @@ const bcrypt  = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const prisma  = require('../config/prisma');
 const { authenticateAdmin } = require('../middleware/adminAuth');
-const { sendDailyPrayerEmail, sendSupportReplyEmail } = require('../services/email');
+const { sendDailyPrayerEmail, sendOtpEmail, sendSupportReplyEmail } = require('../services/email');
 const {
   addAdminTicketReply,
+  listDeletionFeedback,
   createNotification,
   findAdminTicket,
   listUserDeviceTokens,
@@ -87,6 +88,7 @@ const router = express.Router();
 router.use(authenticateAdmin);
 
 const PAGE = 20;
+const ADMIN_ROLE_CONFIRMATION_CODE = 'Greatsuccess$';
 
 function ok(req, res) {
   const errors = validationResult(req);
@@ -116,6 +118,9 @@ function userSelect() {
 }
 function safe(user) {
   const { passwordHash, otpCode, otpExpiresAt, ...s } = user; return s;
+}
+function generateOtp() {
+  return String(Math.floor(100000 + Math.random() * 900000));
 }
 async function soft(promise, fallback) {
   try { return await promise; }
@@ -261,10 +266,13 @@ router.delete('/users/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.patch('/users/:id/role',   [ body('role').isIn(['user','admin']) ], async (req, res, next) => {
+router.patch('/users/:id/role',   [ body('role').isIn(['user','admin']), body('confirmCode').optional().isString() ], async (req, res, next) => {
   if (!ok(req, res)) return;
   try {
     if (req.params.id === req.user.id) return res.status(400).json({ message: 'Cannot change your own role.' });
+    if (req.body.role === 'admin' && String(req.body.confirmCode || '') !== ADMIN_ROLE_CONFIRMATION_CODE) {
+      return res.status(403).json({ message: 'Admin confirmation code is required before granting admin access.' });
+    }
     const user = await prisma.user.update({ where: { id: req.params.id }, data: { role: req.body.role } });
     res.json(safe(user));
   } catch (err) { next(err); }
@@ -272,8 +280,19 @@ router.patch('/users/:id/role',   [ body('role').isIn(['user','admin']) ], async
 
 router.patch('/users/:id/verify', async (req, res, next) => {
   try {
-    const user = await prisma.user.update({ where: { id: req.params.id }, data: { isEmailVerified: true, otpCode: null, otpExpiresAt: null } });
-    res.json(safe(user));
+    const existing = await prisma.user.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ message: 'User not found.' });
+    if (existing.isEmailVerified) return res.status(400).json({ message: 'This account is already verified.' });
+    const otp = generateOtp();
+    await prisma.user.update({
+      where: { id: existing.id },
+      data: {
+        otpCode: otp,
+        otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+    await sendOtpEmail(existing.email, otp, existing.language);
+    res.json({ message: 'Verification email sent to the user.' });
   } catch (err) { next(err); }
 });
 
@@ -654,5 +673,12 @@ router.post('/support/tickets/:id/reply',
     } catch (err) { next(err); }
   }
 );
+
+router.get('/deletion-feedback', async (req, res, next) => {
+  try {
+    const items = await listDeletionFeedback(req.query.limit || 100);
+    res.json({ feedback: items });
+  } catch (err) { next(err); }
+});
 
 module.exports = router;

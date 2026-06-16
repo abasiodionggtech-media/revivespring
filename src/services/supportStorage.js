@@ -171,6 +171,21 @@ async function ensureSupportTables() {
         CREATE INDEX IF NOT EXISTS "device_tokens_user_id_last_seen_at_idx"
         ON "device_tokens"("user_id", "last_seen_at")
       `);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS "account_deletion_feedback" (
+          "id" TEXT PRIMARY KEY,
+          "user_id" TEXT,
+          "user_email" TEXT NOT NULL,
+          "user_full_name" TEXT,
+          "reason" TEXT NOT NULL,
+          "feedback" TEXT NOT NULL,
+          "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS "account_deletion_feedback_created_at_idx"
+        ON "account_deletion_feedback"("created_at")
+      `);
     })();
   }
   return ensurePromise;
@@ -434,15 +449,52 @@ async function listUserDeviceTokens(userId) {
   return rows.map((row) => row.token).filter(Boolean);
 }
 
+async function createDeletionFeedback({
+  userId,
+  email,
+  fullName,
+  reason,
+  feedback,
+}) {
+  await ensureSupportTables();
+  const rows = await prisma.$queryRawUnsafe(
+    `INSERT INTO "account_deletion_feedback"
+      ("id", "user_id", "user_email", "user_full_name", "reason", "feedback")
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    makeId(),
+    userId || null,
+    email,
+    fullName || null,
+    reason,
+    feedback
+  );
+  return rows[0] || null;
+}
+
+async function listDeletionFeedback(limit = 100) {
+  await ensureSupportTables();
+  const safeLimit = Math.min(200, Number(limit || 100));
+  return prisma.$queryRawUnsafe(
+    `SELECT *
+     FROM "account_deletion_feedback"
+     ORDER BY "created_at" DESC
+     LIMIT $1`,
+    safeLimit
+  );
+}
+
 module.exports = {
   addAdminTicketReply,
   addUserTicketMessage,
   countUnreadNotifications,
+  createDeletionFeedback,
   createNotification,
   createSupportTicket,
   ensureSupportTables,
   findAdminTicket,
   findUserTicket,
+  listDeletionFeedback,
   listAdminTickets,
   listNotifications,
   listUserTickets,

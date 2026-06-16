@@ -120,11 +120,13 @@ async function verifyEmailTransport() {
   throw new Error('No email transport configured.');
 }
 
-function buildOtpHtml(otp, language) {
+function buildOtpHtml(otp, language, emailAddress) {
   const isFr = language === 'fr';
   const subject = isFr
     ? `${otp} - Votre code de verification ReviveSpring`
     : `${otp} - Your ReviveSpring verification code`;
+  const baseUrl = (process.env.WEB_APP_URL || 'https://revivespring.com').replace(/\/+$/, '');
+  const verifyUrl = `${baseUrl}/verify?email=${encodeURIComponent(emailAddress || '')}`;
 
   const html = `<!DOCTYPE html>
 <html>
@@ -142,6 +144,8 @@ function buildOtpHtml(otp, language) {
             <div style="padding:20px;border:2px solid #3f8f48;border-radius:10px;background:#f5f9f7;">
               <p style="margin:0;color:#0e4b3e;font-family:monospace;font-size:38px;font-weight:900;letter-spacing:12px;">${escapeHtml(otp)}</p>
             </div>
+            <p style="margin:20px 0 0;color:#48625a;font-size:14px;">${isFr ? 'Ou ouvrez directement votre page de verification:' : 'Or open your verification page directly:'}</p>
+            <p style="margin:8px 0 0;"><a href="${verifyUrl}" style="display:inline-block;padding:12px 18px;border-radius:999px;background:#0e4b3e;color:#ffffff;text-decoration:none;font-weight:700;">${isFr ? 'Verifier mon compte' : 'Verify my account'}</a></p>
             <p style="margin:20px 0 0;color:#6d7f79;font-size:12px;">${isFr ? "Si vous n'avez pas demande ce code, ignorez cet email." : "If you did not request this code, ignore this email."}</p>
           </td></tr>
         </table>
@@ -154,7 +158,7 @@ function buildOtpHtml(otp, language) {
 }
 
 async function sendOtpEmail(toEmail, otp, language) {
-  const email = buildOtpHtml(otp, language || 'en');
+  const email = buildOtpHtml(otp, language || 'en', toEmail);
   return sendMail({ to: toEmail, subject: email.subject, html: email.html });
 }
 

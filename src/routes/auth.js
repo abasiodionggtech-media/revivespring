@@ -9,6 +9,7 @@ const prisma = require('../config/prisma');
 const { sendOtpEmail, sendSecurityAlertEmail } = require('../services/email');
 const { authenticate } = require('../middleware/auth');
 const {
+  createDeletionFeedback,
   createNotification,
   findOtherAccountSession,
   listUserDeviceTokens,
@@ -22,6 +23,11 @@ const googleClient = new OAuth2Client();
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function generateOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function verificationLink(email) {
+  const baseUrl = (process.env.WEB_APP_URL || 'https://revivespring.com').replace(/\/+$/, '');
+  return `${baseUrl}/verify?email=${encodeURIComponent(email)}`;
 }
 
 function signToken(userId) {
@@ -277,9 +283,8 @@ router.post(
           if (!await deliverOtp(res, email, otp, existing.language)) return;
           return res.status(201).json({
             message: 'Account exists but email not verified. A new code has been sent.',
-            token: signToken(existing.id),
-            user: safeUser(existing),
             requiresVerification: true,
+            verifyUrl: verificationLink(email),
           });
         }
         return res.status(409).json({ message: 'Email already in use.' });
@@ -308,9 +313,8 @@ router.post(
       // Return immediately with token so Flutter can navigate to verify screen
       return res.status(201).json({
         message: 'Account created. Please verify your email.',
-        token: signToken(user.id),
-        user: safeUser(user),
         requiresVerification: true,
+        verifyUrl: verificationLink(email),
       });
     } catch (err) {
       next(err);
@@ -360,8 +364,7 @@ router.post(
         return res.status(403).json({
           message: 'Email not verified. A verification code has been sent.',
           requiresVerification: true,
-          token: signToken(user.id),
-          user: safeUser(user),
+          verifyUrl: verificationLink(email),
         });
       }
 
@@ -442,7 +445,10 @@ router.post(
         },
       });
       if (!await deliverOtp(res, email, otp, user.language)) return;
-      return res.json({ message: 'Verification code resent.' });
+      return res.json({
+        message: 'Verification code resent.',
+        verifyUrl: verificationLink(email),
+      });
     } catch (err) {
       next(err);
     }
@@ -504,6 +510,31 @@ router.patch(
 );
 
 // ─── POST /api/auth/change-password ──────────────────────────────────────────
+router.delete(
+  '/me',
+  authenticate,
+  [
+    body('reason').trim().isLength({ min: 3, max: 120 }).withMessage('Please share a short reason for deleting your account.'),
+    body('feedback').trim().isLength({ min: 5, max: 2000 }).withMessage('Please tell us why you are leaving before deleting your account.'),
+  ],
+  async (req, res, next) => {
+    if (handleValidation(req, res)) return;
+    try {
+      await createDeletionFeedback({
+        userId: req.user.id,
+        email: req.user.email,
+        fullName: req.user.fullName,
+        reason: req.body.reason,
+        feedback: req.body.feedback,
+      });
+      await prisma.user.delete({ where: { id: req.user.id } });
+      return res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 router.post(
   '/change-password',
   authenticate,
