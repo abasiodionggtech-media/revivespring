@@ -19,6 +19,14 @@ function parseJsonArray(value) {
   }
 }
 
+function supportSubjectFromMessage(subject, message) {
+  const cleanSubject = String(subject || '').trim();
+  if (cleanSubject) return cleanSubject.slice(0, 120);
+  const cleanMessage = String(message || '').replace(/\s+/g, ' ').trim();
+  if (!cleanMessage) return 'Support request';
+  return cleanMessage.length > 60 ? `${cleanMessage.slice(0, 60)}...` : cleanMessage;
+}
+
 function mapTicket(row) {
   if (!row) return null;
   const user = row.email
@@ -205,7 +213,7 @@ async function createSupportTicket({ user, subject, message }) {
      RETURNING *`,
     ticketId,
     user.id,
-    subject || 'Customer care message',
+    supportSubjectFromMessage(subject, message),
     JSON.stringify(messages)
   );
   return mapTicket(rows[0]);
