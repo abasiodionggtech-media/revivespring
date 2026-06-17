@@ -61,6 +61,12 @@ function zonedParts(date, timeZone) {
   };
 }
 
+function hasReachedReminderTime(localNow, targetHour, targetMinute) {
+  if (localNow.hour > targetHour) return true;
+  if (localNow.hour < targetHour) return false;
+  return localNow.minute >= targetMinute;
+}
+
 async function runDailyPrayerEmailJob() {
   const now = new Date();
 
@@ -80,9 +86,18 @@ async function runDailyPrayerEmailJob() {
     const dueUsers = users.filter((user) => {
       const timeZone = user.timezone || 'UTC';
       const localNow = zonedParts(now, timeZone);
-      const targetHour = Number.isInteger(user.reminderHour) ? user.reminderHour : user.registeredHour;
+      const targetHour = Number.isInteger(user.reminderHour)
+        ? user.reminderHour
+        : Number.isInteger(user.registeredHour)
+          ? user.registeredHour
+          : 9;
       const targetMinute = Number.isInteger(user.reminderMinute) ? user.reminderMinute : 0;
-      if (localNow.hour !== targetHour || localNow.minute !== targetMinute) return false;
+
+      // Send once the user's local reminder time has been reached.
+      // This prevents missed daily emails when the server wakes late,
+      // restarts, or drifts past the exact scheduled minute.
+      if (!hasReachedReminderTime(localNow, targetHour, targetMinute)) return false;
+
       if (!user.lastDailyEmailAt) return true;
       const lastSentLocalDate = zonedParts(new Date(user.lastDailyEmailAt), timeZone).date;
       return lastSentLocalDate !== localNow.date;
