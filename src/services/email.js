@@ -18,9 +18,18 @@ function hasSmtpConfig() {
   return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 }
 
-function getFrom() {
+function hasResendConfig() {
+  return Boolean(process.env.RESEND_API_KEY);
+}
+
+function getResendFrom() {
   return process.env.EMAIL_FROM
     || process.env.RESEND_FROM
+    || 'ReviveSpring <noreply@revivespring.com>';
+}
+
+function getSmtpFrom() {
+  return process.env.EMAIL_FROM
     || process.env.SMTP_USER
     || 'ReviveSpring <noreply@revivespring.com>';
 }
@@ -82,42 +91,56 @@ function resendPost(payload) {
 }
 
 async function sendMail({ to, subject, html }) {
-  if (hasSmtpConfig()) {
-    const result = await getSmtpTransport().sendMail({
-      from: getFrom(),
-      to,
-      subject,
-      html,
-    });
-    console.log(`[EMAIL] SMTP accepted message for ${to} id:${result.messageId}`);
-    return result;
-  }
-
-  if (process.env.RESEND_API_KEY) {
+  if (hasResendConfig()) {
+    const from = getResendFrom();
     const result = await resendPost({
-      from: getFrom(),
+      from,
       to: [to],
       subject,
       html,
     });
-    console.log(`[EMAIL] Resend accepted message for ${to} id:${result.id}`);
+    console.log(`[EMAIL] Resend accepted message for ${to} from:${from} id:${result.id}`);
     return result;
   }
 
-  throw new Error('Email transport is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and EMAIL_FROM on Render.');
+  if (hasSmtpConfig()) {
+    const from = getSmtpFrom();
+    const result = await getSmtpTransport().sendMail({
+      from,
+      to,
+      subject,
+      html,
+    });
+    console.log(`[EMAIL] SMTP accepted message for ${to} from:${from} id:${result.messageId}`);
+    return result;
+  }
+
+  throw new Error('Email transport is not configured. Set RESEND_API_KEY and EMAIL_FROM for Resend, or SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and EMAIL_FROM for SMTP.');
 }
 
 async function verifyEmailTransport() {
+  if (hasResendConfig()) {
+    console.log(`[EMAIL] Resend transport is configured. from:${getResendFrom()}`);
+    return;
+  }
   if (hasSmtpConfig()) {
     await getSmtpTransport().verify();
-    console.log('[EMAIL] SMTP transport is ready.');
+    console.log(`[EMAIL] SMTP transport is ready. from:${getSmtpFrom()}`);
     return;
   }
-  if (process.env.RESEND_API_KEY) {
-    console.log('[EMAIL] Resend transport is configured.');
-    return;
-  }
-  throw new Error('No email transport configured.');
+  throw new Error('No email transport configured. Add RESEND_API_KEY and EMAIL_FROM, or configure SMTP.');
+}
+
+function getEmailDiagnostics() {
+  return {
+    transport: hasResendConfig() ? 'resend' : hasSmtpConfig() ? 'smtp' : 'none',
+    resendConfigured: hasResendConfig(),
+    smtpConfigured: hasSmtpConfig(),
+    from: hasResendConfig() ? getResendFrom() : hasSmtpConfig() ? getSmtpFrom() : null,
+    hasEmailFrom: Boolean(process.env.EMAIL_FROM),
+    hasResendFrom: Boolean(process.env.RESEND_FROM),
+    webAppUrl: process.env.WEB_APP_URL || null,
+  };
 }
 
 function buildOtpHtml(otp, language, emailAddress) {
@@ -267,5 +290,6 @@ module.exports = {
   sendDailyPrayerEmail,
   sendSecurityAlertEmail,
   sendSupportReplyEmail,
+  getEmailDiagnostics,
   verifyEmailTransport,
 };

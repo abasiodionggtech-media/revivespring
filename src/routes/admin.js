@@ -73,7 +73,13 @@ const bcrypt  = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const prisma  = require('../config/prisma');
 const { authenticateAdmin } = require('../middleware/adminAuth');
-const { sendDailyPrayerEmail, sendOtpEmail, sendSupportReplyEmail } = require('../services/email');
+const {
+  sendDailyPrayerEmail,
+  sendOtpEmail,
+  sendSecurityAlertEmail,
+  sendSupportReplyEmail,
+  getEmailDiagnostics,
+} = require('../services/email');
 const {
   addAdminTicketReply,
   listDeletionFeedback,
@@ -273,7 +279,9 @@ router.patch('/users/:id/role',   [ body('role').isIn(['user','admin']), body('c
     if (req.body.role === 'admin' && String(req.body.confirmCode || '') !== ADMIN_ROLE_CONFIRMATION_CODE) {
       return res.status(403).json({ message: 'Admin confirmation code is required before granting admin access.' });
     }
-    const user = await prisma.user.update({ where: { id: req.params.id }, data: { role: req.body.role } });
+    const updateData = { role: req.body.role };
+    if (req.body.role === 'admin') updateData.subscriptionStatus = 'premium';
+    const user = await prisma.user.update({ where: { id: req.params.id }, data: updateData });
     res.json(safe(user));
   } catch (err) { next(err); }
 });
@@ -582,6 +590,12 @@ router.delete('/goals/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get('/email/diagnostics', async (req, res, next) => {
+  try {
+    res.json(getEmailDiagnostics());
+  } catch (err) { next(err); }
+});
+
 /* ══════════════════════════════════════════════════════════
    DAILY EMAIL TOOLS
 ══════════════════════════════════════════════════════════ */
@@ -594,6 +608,18 @@ router.post('/email/test', async (req, res, next) => {
     };
     await sendDailyPrayerEmail(req.user.email, req.user.fullName || 'Admin', prayer, req.user.language || 'en');
     res.json({ message: 'Test email sent to ' + req.user.email });
+  } catch (err) { next(err); }
+});
+
+router.post('/email/test-security', async (req, res, next) => {
+  try {
+    await sendSecurityAlertEmail(req.user.email, req.user.fullName || 'Admin', {
+      client: 'the web app',
+      when: new Date().toLocaleString(),
+      ip: req.ip,
+      language: req.user.language || 'en',
+    });
+    res.json({ message: 'Test security email sent to ' + req.user.email });
   } catch (err) { next(err); }
 });
 
@@ -644,7 +670,7 @@ router.post('/support/tickets/:id/reply',
         status: req.body.status || 'answered',
       });
 
-      await createNotification({
+      const notification = await createNotification({
         userId: ticket.userId,
         type: 'support_reply',
         title: 'Customer care replied',
@@ -657,7 +683,12 @@ router.post('/support/tickets/:id/reply',
         await sendPushToTokens(tokens, {
           title: 'Customer care replied',
           body: req.body.message,
-          data: { type: 'support_reply', ticketId: ticket.id, subject: ticket.subject },
+          data: {
+            notificationId: notification.id,
+            type: 'support_reply',
+            ticketId: ticket.id,
+            subject: ticket.subject,
+          },
         });
       } catch (err) {
         console.error(`[PUSH] Support reply push failed for ${ticket.user.email}:`, err.message);
