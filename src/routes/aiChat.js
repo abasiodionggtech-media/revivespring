@@ -14,6 +14,7 @@ const prisma = require('../config/prisma');
 const { authenticate } = require('../middleware/auth');
 const {
   isPremiumUser,
+  aiUsageForToday,
   localDateForTimeZone,
   mergeUserMeta,
   readUserMeta,
@@ -180,7 +181,11 @@ async function consumeAiUnlock(user, unlockToken) {
     throw error;
   }
 
-  const nextMeta = mergeUserMeta(user, { aiUnlock: null });
+  const usage = aiUsageForToday(user);
+  const nextMeta = mergeUserMeta(user, {
+    aiUsage: { date: usage.date, used: usage.used + 1 },
+    aiUnlock: null,
+  });
   return prisma.user.update({
     where: { id: user.id },
     data: { onboardingData: nextMeta },

@@ -179,6 +179,7 @@ async function recordSignInEvent(req, user, client = 'web') {
       otherClient: otherSession ? clientLabel(otherSession.client) : null,
       when: now.toLocaleString(),
       ip: req.ip,
+      language: user.language || 'en',
     });
   } catch (err) {
     console.error(`[SECURITY] Sign-in notification failed for ${user.email}:`, err.message);
@@ -413,6 +414,8 @@ router.post(
           otpExpiresAt: null,
         },
       });
+
+      await recordSignInEvent(req, updated, req.body.client || 'web');
 
       return res.json({
         message: 'Email verified successfully.',

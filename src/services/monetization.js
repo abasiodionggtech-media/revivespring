@@ -40,6 +40,19 @@ function aiUsageForToday(user, date = new Date()) {
   };
 }
 
+function aiAdViewsForToday(user, date = new Date()) {
+  const meta = readUserMeta(user);
+  const today = localDateForTimeZone(date, user && user.timezone ? user.timezone : 'UTC');
+  const raw = meta.aiAdViews && typeof meta.aiAdViews === 'object' ? meta.aiAdViews : {};
+  if (raw.date !== today) {
+    return { date: today, used: 0 };
+  }
+  return {
+    date: today,
+    used: Number.isFinite(raw.used) ? Number(raw.used) : 0,
+  };
+}
+
 function mergeUserMeta(user, patch) {
   const current = readUserMeta(user);
   return {
@@ -49,6 +62,7 @@ function mergeUserMeta(user, patch) {
 }
 
 module.exports = {
+  aiAdViewsForToday,
   aiUsageForToday,
   effectivePlan,
   isPremiumUser,

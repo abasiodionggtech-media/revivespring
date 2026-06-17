@@ -5,6 +5,7 @@ const express = require('express');
 const prisma = require('../config/prisma');
 const { authenticate } = require('../middleware/auth');
 const {
+  aiAdViewsForToday,
   aiUsageForToday,
   effectivePlan,
   isPremiumUser,
@@ -57,9 +58,10 @@ async function loadSettings() {
 
 function buildStatus(user, settings) {
   const usage = aiUsageForToday(user);
+  const adViews = aiAdViewsForToday(user);
   const maxDailyUses = Math.max(0, parseInt(settings.ai_ad_daily_limit || '5', 10) || 5);
   const premium = isPremiumUser(user);
-  const remainingToday = premium ? maxDailyUses : Math.max(0, maxDailyUses - usage.used);
+  const remainingToday = premium ? maxDailyUses : Math.max(0, maxDailyUses - adViews.used);
 
   return {
     plan: effectivePlan(user),
@@ -95,7 +97,9 @@ function buildStatus(user, settings) {
     },
     ai: {
       maxDailyUses,
-      usedToday: premium ? 0 : usage.used,
+      usedToday: premium ? 0 : adViews.used,
+      adViewsToday: premium ? 0 : adViews.used,
+      conversationsToday: premium ? 0 : usage.used,
       remainingToday,
       requiresAdUnlock: !premium && toBool(settings.ai_ad_unlock_enabled, true),
     },
@@ -125,8 +129,9 @@ router.post('/ai/unlock', async (req, res, next) => {
     }
 
     const usage = aiUsageForToday(req.user);
+    const adViews = aiAdViewsForToday(req.user);
     const maxDailyUses = Math.max(0, parseInt(settings.ai_ad_daily_limit || '5', 10) || 5);
-    if (usage.used >= maxDailyUses) {
+    if (adViews.used >= maxDailyUses) {
       return res.status(403).json({
         message: 'Daily AI limit reached for free users.',
         code: 'AI_DAILY_LIMIT_REACHED',
@@ -136,8 +141,13 @@ router.post('/ai/unlock', async (req, res, next) => {
 
     const unlockToken = crypto.randomBytes(24).toString('hex');
     const nextMeta = mergeUserMeta(req.user, {
-      aiUsage: { date: usage.date, used: usage.used + 1 },
-      aiUnlock: { token: unlockToken, date: usage.date, grantedAt: new Date().toISOString() },
+      aiAdViews: { date: adViews.date, used: adViews.used + 1 },
+      aiUnlock: {
+        token: unlockToken,
+        date: adViews.date,
+        grantedAt: new Date().toISOString(),
+        adViewNumber: adViews.used + 1,
+      },
     });
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
@@ -145,6 +155,8 @@ router.post('/ai/unlock', async (req, res, next) => {
     });
     res.json({
       unlockToken,
+      adViewsToday: adViews.used + 1,
+      conversationsToday: usage.used,
       ...buildStatus(updatedUser, settings).ai,
     });
   } catch (err) {
