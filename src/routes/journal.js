@@ -1,6 +1,7 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const prisma = require('../config/prisma');
+const { isPremiumUser } = require('../services/monetization');
 
 const router = express.Router();
 
@@ -46,7 +47,7 @@ router.post('/',
     if (validate(req, res)) return;
     try {
       // Free plan: max 10 entries
-      if (req.user.subscriptionStatus !== 'premium') {
+      if (!isPremiumUser(req.user)) {
         const count = await prisma.journalEntry.count({ where: { userId: req.user.id } });
         if (count >= 10) {
           return res.status(403).json({

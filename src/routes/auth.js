@@ -8,6 +8,7 @@ const { body, validationResult } = require('express-validator');
 const prisma = require('../config/prisma');
 const { sendOtpEmail, sendSecurityAlertEmail } = require('../services/email');
 const { authenticate } = require('../middleware/auth');
+const { effectivePlan } = require('../services/monetization');
 const {
   createDeletionFeedback,
   createNotification,
@@ -40,6 +41,8 @@ function safeUser(user) {
   const { passwordHash, otpCode, otpExpiresAt, ...safe } = user;
   return {
     ...safe,
+    subscriptionStatus: effectivePlan(user),
+    plan: effectivePlan(user),
     hasCompletedOnboarding: !!(safe.onboardingData && typeof safe.onboardingData === 'object' && safe.onboardingData.completedAt),
   };
 }

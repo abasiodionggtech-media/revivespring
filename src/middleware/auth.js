@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const prisma = require('../config/prisma');
+const { isPremiumUser } = require('../services/monetization');
 
 /**
  * Middleware: verify JWT and attach req.user
@@ -33,7 +34,7 @@ async function authenticate(req, res, next) {
  * Middleware: require premium subscription
  */
 function requirePremium(req, res, next) {
-  if (req.user.subscriptionStatus !== 'premium') {
+  if (!isPremiumUser(req.user)) {
     return res.status(403).json({ message: 'Premium subscription required.' });
   }
   next();
