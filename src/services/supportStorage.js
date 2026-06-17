@@ -236,6 +236,9 @@ async function createSupportTicket({ user, subject, message }) {
 
 async function addUserTicketMessage({ ticket, user, message }) {
   await ensureSupportTables();
+  if (ticket.status === 'closed') {
+    throw new Error('This conversation has been closed by ReviveSpring Care. You can still view the chat history, but new messages are disabled.');
+  }
   const messages = parseJsonArray(ticket.messages);
   messages.push({
     id: makeId(),
@@ -245,7 +248,6 @@ async function addUserTicketMessage({ ticket, user, message }) {
     body: message,
     createdAt: new Date().toISOString(),
   });
-  const status = ticket.status === 'closed' ? 'open' : ticket.status;
   const rows = await prisma.$queryRawUnsafe(
     `UPDATE "support_tickets"
      SET "messages" = $2::jsonb, "status" = $3, "updated_at" = CURRENT_TIMESTAMP
@@ -253,6 +255,19 @@ async function addUserTicketMessage({ ticket, user, message }) {
      RETURNING *`,
     ticket.id,
     JSON.stringify(messages),
+    ticket.status || 'open'
+  );
+  return mapTicket(rows[0]);
+}
+
+async function updateSupportTicketStatus(ticketId, status) {
+  await ensureSupportTables();
+  const rows = await prisma.$queryRawUnsafe(
+    `UPDATE "support_tickets"
+     SET "status" = $2, "updated_at" = CURRENT_TIMESTAMP
+     WHERE "id" = $1
+     RETURNING *`,
+    ticketId,
     status
   );
   return mapTicket(rows[0]);
@@ -501,6 +516,7 @@ module.exports = {
   markAllNotificationsRead,
   markNotificationRead,
   findOtherAccountSession,
+  updateSupportTicketStatus,
   upsertAccountSession,
   listUserDeviceTokens,
   upsertDeviceToken,

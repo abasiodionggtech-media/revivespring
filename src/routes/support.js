@@ -1,5 +1,6 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
+const { sendSupportInboxEmail } = require('../services/email');
 
 const {
   addUserTicketMessage,
@@ -54,6 +55,11 @@ router.post('/tickets',
         subject: req.body.subject,
         message: req.body.message,
       });
+      try {
+        await sendSupportInboxEmail(ticket, req.user, req.body.message);
+      } catch (err) {
+        console.error(`[EMAIL] Support inbox email failed for ${req.user.email}:`, err.message);
+      }
       res.status(201).json(mapTicket(ticket));
     } catch (err) {
       next(err);

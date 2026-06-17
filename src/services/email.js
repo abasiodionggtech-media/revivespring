@@ -34,6 +34,10 @@ function getSmtpFrom() {
     || 'ReviveSpring <noreply@revivespring.com>';
 }
 
+function getSupportInbox() {
+  return process.env.SUPPORT_EMAIL || 'support@revivespring.com';
+}
+
 function getSmtpTransport() {
   if (!smtpTransport) {
     const port = Number(process.env.SMTP_PORT || 587);
@@ -284,11 +288,49 @@ async function sendSupportReplyEmail(toEmail, name, ticket, reply) {
   return sendMail({ to: toEmail, subject: 'ReviveSpring Care replied to your message', html });
 }
 
+async function sendSupportInboxEmail(ticket, user, firstMessage) {
+  const safeName = escapeHtml(user?.fullName || 'Customer');
+  const safeEmail = escapeHtml(user?.email || 'No email');
+  const safeSubject = escapeHtml(ticket?.subject || 'Customer care message');
+  const safeBody = escapeHtml(firstMessage || '');
+  const safeTicketId = escapeHtml(ticket?.id || '');
+  const safePlan = escapeHtml(user?.subscriptionStatus || user?.plan || 'free');
+  const safeLanguage = escapeHtml(user?.language || 'en');
+  const html = `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f5f9f7;font-family:Arial,sans-serif;color:#173a33;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px;background:#f5f9f7;"><tr><td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;overflow:hidden;background:#ffffff;border-radius:14px;">
+        <tr><td style="padding:28px 36px;text-align:center;background:#0e4b3e;"><h1 style="margin:0;color:#ffffff;font-size:22px;letter-spacing:2px;">REVIVESPRING SUPPORT</h1></td></tr>
+        <tr><td style="padding:30px 36px;">
+          <h2 style="margin:0 0 12px;">New customer care conversation</h2>
+          <p style="margin:0 0 18px;color:#48625a;">A customer has opened a new support chat and is waiting for follow-up.</p>
+          <p style="padding:14px 16px;background:#f5f9f7;border-left:4px solid #3f8f48;line-height:1.6;">
+            <strong>Ticket ID:</strong> ${safeTicketId}<br/>
+            <strong>Subject:</strong> ${safeSubject}<br/>
+            <strong>Name:</strong> ${safeName}<br/>
+            <strong>Email:</strong> ${safeEmail}<br/>
+            <strong>Plan:</strong> ${safePlan}<br/>
+            <strong>Language:</strong> ${safeLanguage}
+          </p>
+          <h3 style="margin:22px 0 8px;">First message</h3>
+          <p style="white-space:pre-line;line-height:1.7;padding:14px 16px;background:#f5f9f7;border-left:4px solid #0e4b3e;">${safeBody}</p>
+          <p style="color:#6d7f79;font-size:13px;">Sign in to the ReviveSpring admin dashboard to reply or close this conversation.</p>
+        </td></tr>
+      </table>
+    </td></tr></table>
+  </body></html>`;
+  return sendMail({
+    to: getSupportInbox(),
+    subject: `New ReviveSpring support message: ${ticket?.subject || 'Customer care message'}`,
+    html,
+  });
+}
+
 module.exports = {
   sendOtpEmail,
   safeSendOtpEmail,
   sendDailyPrayerEmail,
   sendSecurityAlertEmail,
+  sendSupportInboxEmail,
   sendSupportReplyEmail,
   getEmailDiagnostics,
   verifyEmailTransport,

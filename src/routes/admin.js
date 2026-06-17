@@ -87,6 +87,7 @@ const {
   findAdminTicket,
   listUserDeviceTokens,
   listAdminTickets,
+  updateSupportTicketStatus,
 } = require('../services/supportStorage');
 const { sendPushToTokens } = require('../services/push');
 
@@ -704,6 +705,25 @@ router.post('/support/tickets/:id/reply',
     } catch (err) { next(err); }
   }
 );
+
+router.post('/support/tickets/:id/close', async (req, res, next) => {
+  try {
+    const ticket = await findAdminTicket(req.params.id);
+    if (!ticket) return res.status(404).json({ message: 'Support ticket not found.' });
+
+    const updated = await updateSupportTicketStatus(ticket.id, 'closed');
+
+    await createNotification({
+      userId: ticket.userId,
+      type: 'support_reply',
+      title: 'Customer care closed your conversation',
+      body: 'This support conversation has been closed. You can still review the full chat history in ReviveSpring.',
+      metadata: { ticketId: ticket.id, subject: ticket.subject, status: 'closed' },
+    });
+
+    res.json({ ...updated, user: ticket.user });
+  } catch (err) { next(err); }
+});
 
 router.get('/deletion-feedback', async (req, res, next) => {
   try {
