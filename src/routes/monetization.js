@@ -38,6 +38,37 @@ const DEFAULT_SETTINGS = {
   ai_ad_cta_fr: 'Continuer vers l IA',
 };
 
+function safeMonetizationUser(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    fullName: user.fullName,
+    language: user.language || 'en',
+    role: user.role || 'user',
+    authProvider: user.authProvider || 'email',
+    isEmailVerified: user.isEmailVerified !== false,
+    profileImageUrl: user.profileImageUrl || null,
+    timezone: user.timezone || 'UTC',
+    reminderHour: Number.isInteger(user.reminderHour)
+      ? user.reminderHour
+      : Number.isInteger(user.registeredHour)
+        ? user.registeredHour
+        : 9,
+    reminderMinute: Number.isInteger(user.reminderMinute)
+      ? user.reminderMinute
+      : 0,
+    dailyEmailEnabled: user.dailyEmailEnabled !== false,
+    pushNotificationsEnabled: user.pushNotificationsEnabled !== false,
+    subscriptionStatus: effectivePlan(user),
+    plan: effectivePlan(user),
+    hasCompletedOnboarding: !!(
+      user.onboardingData &&
+      typeof user.onboardingData === 'object' &&
+      user.onboardingData.completedAt
+    ),
+  };
+}
+
 function toBool(value, fallback = false) {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') return value.trim().toLowerCase() === 'true';
@@ -203,13 +234,8 @@ router.post('/subscription/mobile-sync', async (req, res, next) => {
     res.json({
       message: 'Mobile subscription recorded.',
       plan: effectivePlan(updatedUser),
-      user: {
-        id: updatedUser.id,
-        email: updatedUser.email,
-        role: updatedUser.role,
-        subscriptionStatus: effectivePlan(updatedUser),
-        onboardingData: readUserMeta(updatedUser),
-      },
+      user: safeMonetizationUser(updatedUser),
+      subscription: readUserMeta(updatedUser).subscription || null,
     });
   } catch (err) {
     next(err);
