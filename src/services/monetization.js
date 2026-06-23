@@ -18,9 +18,21 @@ function localDateForTimeZone(date, timeZone) {
 }
 
 function effectivePlan(user) {
-  return user && user.role === 'admin'
-    ? 'premium'
-    : (user && user.subscriptionStatus) || 'free';
+  if (user && user.role === 'admin') {
+    return 'premium';
+  }
+
+  const meta = readUserMeta(user);
+  const subscription = meta.subscription && typeof meta.subscription === 'object' ? meta.subscription : {};
+  if (subscription.expiresAt) {
+    const expiresAt = new Date(subscription.expiresAt);
+    if (!Number.isNaN(expiresAt.getTime()) && expiresAt > new Date()) {
+      return 'premium';
+    }
+    return 'free';
+  }
+
+  return (user && user.subscriptionStatus) || 'free';
 }
 
 function isPremiumUser(user) {

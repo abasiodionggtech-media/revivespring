@@ -12,6 +12,7 @@ const {
   mergeUserMeta,
   readUserMeta,
 } = require('../services/monetization');
+const { sendSubscriptionConfirmationEmail } = require('../services/email');
 
 const router = express.Router();
 
@@ -208,18 +209,36 @@ router.post('/subscription/mobile-sync', async (req, res, next) => {
       acknowledged,
     } = req.body || {};
 
+    const currentSubscription = readUserMeta(req.user).subscription || {};
+    const rawPurchaseTime = Number(purchaseTime);
+    const parsedPurchaseTime = new Date(
+      Number.isFinite(rawPurchaseTime) && rawPurchaseTime > 0
+        ? rawPurchaseTime
+        : purchaseTime || Date.now(),
+    );
+    const normalizedPurchaseTime = Number.isNaN(parsedPurchaseTime.getTime())
+      ? new Date()
+      : parsedPurchaseTime;
+    const existingExpiry = new Date(currentSubscription.expiresAt || 0);
+    const baseDate = existingExpiry.getTime() > Date.now()
+      ? existingExpiry
+      : normalizedPurchaseTime;
+    const expiresAt = new Date(baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+
     const nextMeta = mergeUserMeta(req.user, {
       subscription: {
         provider: 'google_play',
         orderId: orderId || null,
         productId: productId || null,
         purchaseToken: purchaseToken || null,
-        purchaseTime: purchaseTime || new Date().toISOString(),
+        purchaseTime: normalizedPurchaseTime.toISOString(),
         currencyCode: currencyCode || null,
         priceAmountMicros: priceAmountMicros || null,
         packageName: packageName || null,
         acknowledged: acknowledged === true,
         recordedAt: new Date().toISOString(),
+        durationDays: 30,
+        expiresAt: expiresAt.toISOString(),
       },
     });
 
@@ -230,6 +249,23 @@ router.post('/subscription/mobile-sync', async (req, res, next) => {
         onboardingData: nextMeta,
       },
     });
+
+    try {
+      await sendSubscriptionConfirmationEmail(
+        updatedUser.email,
+        updatedUser.fullName,
+        {
+          orderId,
+          productId,
+          priceAmountMicros,
+          currencyCode,
+          purchaseTime,
+        },
+        updatedUser.language || 'en',
+      );
+    } catch (emailError) {
+      console.error('[EMAIL] Subscription confirmation failed:', emailError.message);
+    }
 
     res.json({
       message: 'Mobile subscription recorded.',

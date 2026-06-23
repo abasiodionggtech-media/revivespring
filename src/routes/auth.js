@@ -6,7 +6,12 @@ const crypto = require('crypto');
 const { OAuth2Client } = require('google-auth-library');
 const { body, validationResult } = require('express-validator');
 const prisma = require('../config/prisma');
-const { sendOtpEmail, sendSecurityAlertEmail } = require('../services/email');
+const {
+  sendOtpEmail,
+  sendSecurityAlertEmail,
+  sendPasswordResetEmail,
+  sendSubscriptionConfirmationEmail,
+} = require('../services/email');
 const { authenticate } = require('../middleware/auth');
 const { effectivePlan } = require('../services/monetization');
 const {
@@ -138,7 +143,7 @@ async function recordSignInEvent(req, user, client = 'web') {
       : `Your account was signed in on ${clientLabel(normalizedClient)}.`;
 
     if (otherSession) {
-      await createNotification({
+      const notification = await createNotification({
         userId: user.id,
         type: 'security',
         title,
@@ -157,6 +162,7 @@ async function recordSignInEvent(req, user, client = 'web') {
           title,
           body,
           data: {
+            notificationId: notification.id,
             type: 'security',
             client: normalizedClient,
             otherClient: otherSession.client,
@@ -562,6 +568,74 @@ router.post(
       const passwordHash = await bcrypt.hash(newPassword, 12);
       await prisma.user.update({ where: { id: req.user.id }, data: { passwordHash } });
       return res.json({ message: 'Password updated successfully.' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  '/forgot-password',
+  [body('email').isEmail().normalizeEmail().withMessage('Valid email required.')],
+  async (req, res, next) => {
+    if (handleValidation(req, res)) return;
+    try {
+      const { email } = req.body;
+      const user = await prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        return res.status(200).json({ message: 'If this email exists, a reset code has been sent.' });
+      }
+      if (user.authProvider === 'google') {
+        return res.status(400).json({ message: 'This account uses Google Sign-In. Use Google to sign in.' });
+      }
+      const otp = generateOtp();
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          otpCode: otp,
+          otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      });
+      await sendPasswordResetEmail(user.email, user.fullName || user.email, otp, user.language || 'en');
+      return res.json({ message: 'If this email exists, a reset code has been sent.' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  '/reset-password',
+  [
+    body('email').isEmail().normalizeEmail().withMessage('Valid email required.'),
+    body('otp').isLength({ min: 6, max: 6 }).withMessage('Reset code must be 6 digits.'),
+    body('newPassword').isLength({ min: 6 }).withMessage('New password must be at least 6 characters.'),
+  ],
+  async (req, res, next) => {
+    if (handleValidation(req, res)) return;
+    try {
+      const { email, otp, newPassword } = req.body;
+      const user = await prisma.user.findUnique({ where: { email } });
+      if (!user) return res.status(404).json({ message: 'User not found.' });
+      if (user.authProvider === 'google') {
+        return res.status(400).json({ message: 'This account uses Google Sign-In and does not have a password to reset.' });
+      }
+      if (user.otpCode !== otp) {
+        return res.status(400).json({ message: 'Invalid reset code.' });
+      }
+      if (!user.otpExpiresAt || new Date() > user.otpExpiresAt) {
+        return res.status(400).json({ message: 'Reset code expired. Request a new one.' });
+      }
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+      const updated = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash,
+          otpCode: null,
+          otpExpiresAt: null,
+        },
+      });
+      return res.json({ message: 'Password reset successfully.', user: safeUser(updated) });
     } catch (err) {
       next(err);
     }
