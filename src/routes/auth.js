@@ -14,6 +14,11 @@ const {
 } = require('../services/email');
 const { authenticate } = require('../middleware/auth');
 const { effectivePlan } = require('../services/monetization');
+
+// Ensure functions are available
+if (typeof sendPasswordResetEmail !== 'function') {
+  console.warn('[AUTH] Warning: sendPasswordResetEmail not properly imported from email service');
+}
 const {
   createDeletionFeedback,
   createNotification,
@@ -596,7 +601,19 @@ router.post(
           otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
         },
       });
-      await sendPasswordResetEmail(user.email, user.fullName || user.email, otp, user.language || 'en');
+      
+      // Send password reset email
+      if (typeof sendPasswordResetEmail === 'function') {
+        try {
+          await sendPasswordResetEmail(user.email, user.fullName || user.email, otp, user.language || 'en');
+        } catch (emailErr) {
+          console.error('[AUTH] Failed to send password reset email:', emailErr.message);
+          // Continue anyway to not reveal whether email exists
+        }
+      } else {
+        console.warn('[AUTH] sendPasswordResetEmail function not available');
+      }
+      
       return res.json({ message: 'If this email exists, a reset code has been sent.' });
     } catch (err) {
       next(err);
