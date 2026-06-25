@@ -626,25 +626,30 @@ router.post(
   [
     body('email').isEmail().normalizeEmail().withMessage('Valid email required.'),
     body('otp').isLength({ min: 6, max: 6 }).withMessage('Reset code must be 6 digits.'),
-    body('newPassword').isLength({ min: 6 }).withMessage('New password must be at least 6 characters.'),
+    body('newPassword')
+      .if(body('password').not().exists())
+      .isLength({ min: 6 })
+      .withMessage('New password must be at least 6 characters.'),
+    body('password')
+      .if(body('newPassword').not().exists())
+      .isLength({ min: 6 })
+      .withMessage('New password must be at least 6 characters.'),
   ],
   async (req, res, next) => {
     if (handleValidation(req, res)) return;
     try {
-      const { email, otp, newPassword } = req.body;
+      const { email, otp } = req.body;
+      const newPassword = req.body.newPassword || req.body.password;
       const user = await prisma.user.findUnique({ where: { email } });
       if (!user) return res.status(404).json({ message: 'User not found.' });
       if (user.authProvider === 'google') {
         return res.status(400).json({ message: 'This account uses Google Sign-In and does not have a password to reset.' });
       }
-      if (user.otpCode !== otp) {
-        return res.status(400).json({ message: 'Invalid reset code.' });
-      }
-      if (!user.otpExpiresAt || new Date() > user.otpExpiresAt) {
-        return res.status(400).json({ message: 'Reset code expired. Request a new one.' });
+      if (user.otpCode !== otp || !user.otpExpiresAt || new Date() > user.otpExpiresAt) {
+        return res.status(400).json({ message: 'Invalid or expired reset code. Request a new one.' });
       }
       const passwordHash = await bcrypt.hash(newPassword, 12);
-      const updated = await prisma.user.update({
+      await prisma.user.update({
         where: { id: user.id },
         data: {
           passwordHash,
@@ -652,7 +657,7 @@ router.post(
           otpExpiresAt: null,
         },
       });
-      return res.json({ message: 'Password reset successfully.', user: safeUser(updated) });
+      return res.json({ message: 'Password changed successfully. Please log in again.' });
     } catch (err) {
       next(err);
     }
