@@ -189,6 +189,39 @@ async function sendOtpEmail(toEmail, otp, language) {
   return sendMail({ to: toEmail, subject: email.subject, html: email.html });
 }
 
+async function sendPasswordResetEmail(toEmail, name, otp, language) {
+  const isFr = language === 'fr';
+  const safeName = escapeHtml(name || (isFr ? 'ami' : 'friend'));
+  const safeOtp = escapeHtml(otp);
+  const subject = isFr
+    ? `${otp} - Votre code de reinitialisation ReviveSpring`
+    : `${otp} - Your ReviveSpring password reset code`;
+  const html = `<!DOCTYPE html>
+<html>
+  <body style="margin:0;padding:0;background:#f5f9f7;font-family:Arial,sans-serif;color:#173a33;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px;background:#f5f9f7;">
+      <tr><td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:500px;overflow:hidden;background:#ffffff;border-radius:14px;">
+          <tr><td style="padding:28px 36px;text-align:center;background:#0e4b3e;">
+            <h1 style="margin:0;color:#ffffff;font-size:22px;letter-spacing:2px;">REVIVESPRING</h1>
+            <p style="margin:6px 0 0;color:#dcebe7;font-size:12px;">${isFr ? 'Revivez votre esprit' : 'Revive your spirit'}</p>
+          </td></tr>
+          <tr><td style="padding:34px 36px;text-align:center;">
+            <h2 style="margin:0 0 10px;font-size:20px;">${isFr ? 'Reinitialisation du mot de passe' : 'Password reset request'}</h2>
+            <p style="margin:0 0 22px;color:#6d7f79;font-size:14px;">${isFr ? 'Utilisez ce code pour reinitialiser votre mot de passe. Il expire dans 10 minutes.' : 'Use this code to reset your password. It expires in 10 minutes.'}</p>
+            <div style="padding:20px;border:2px solid #3f8f48;border-radius:10px;background:#f5f9f7;">
+              <p style="margin:0;color:#0e4b3e;font-family:monospace;font-size:38px;font-weight:900;letter-spacing:12px;">${safeOtp}</p>
+            </div>
+            <p style="margin:20px 0 0;color:#48625a;font-size:14px;">${isFr ? 'Si vous n’avez pas demande cette reinitialisation, ignorez cet e-mail.' : 'If you did not request this reset, ignore this email.'}</p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
+  return sendMail({ to: toEmail, subject, html });
+}
+
 async function safeSendOtpEmail(toEmail, otp, language) {
   try {
     return await sendOtpEmail(toEmail, otp, language);
@@ -327,6 +360,7 @@ async function sendSupportInboxEmail(ticket, user, firstMessage) {
 
 module.exports = {
   sendOtpEmail,
+  sendPasswordResetEmail,
   safeSendOtpEmail,
   sendDailyPrayerEmail,
   sendSecurityAlertEmail,
