@@ -60,6 +60,11 @@ function safeUser(user) {
 function handleValidation(req, res) {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    try {
+      console.warn(`[AUTH] Validation failed [${req.id || 'no-id'}] ${req.method} ${req.originalUrl}:`, errors.array());
+    } catch (logErr) {
+      console.warn('[AUTH] Validation failed (could not log request info)');
+    }
     res.status(422).json({ message: errors.array()[0].msg });
     return true;
   }
@@ -656,6 +661,11 @@ router.post(
           otpExpiresAt: null,
         },
       });
+      try {
+        console.log(`[AUTH] Password changed for ${user.email}`);
+      } catch (logErr) {
+        console.log('[AUTH] Password changed (could not log email)');
+      }
       return res.json({ message: 'Password changed successfully. Please log in again.' });
     } catch (err) {
       next(err);
