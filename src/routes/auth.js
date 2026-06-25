@@ -632,7 +632,7 @@ router.post(
     body('email').isEmail().normalizeEmail().withMessage('Valid email required.'),
     body('otp').isLength({ min: 6, max: 6 }).withMessage('Reset code must be 6 digits.'),
     body().custom((value, { req }) => {
-      const newPassword = req.body.newPassword || req.body.password;
+      const newPassword = req.body.newPassword || req.body.password || req.body.new_password;
       if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
         throw new Error('New password must be at least 6 characters.');
       }
@@ -643,7 +643,7 @@ router.post(
     if (handleValidation(req, res)) return;
     try {
       const { email, otp } = req.body;
-      const newPassword = req.body.newPassword || req.body.password;
+      const newPassword = req.body.newPassword || req.body.password || req.body.new_password;
       const user = await prisma.user.findUnique({ where: { email } });
       if (!user) return res.status(404).json({ message: 'User not found.' });
       if (user.authProvider === 'google') {
