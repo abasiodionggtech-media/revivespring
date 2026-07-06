@@ -6,9 +6,9 @@ const router = express.Router();
 
 const formatVerse = verse => ({
   id: verse.id,
-  verse: verse.verse,
+  verse: verse.verseEn,
+  verse_fr: verse.verseFr,
   reference: verse.reference,
-  language: verse.language,
 });
 
 router.get('/', async (req, res, next) => {
@@ -25,6 +25,21 @@ router.get('/', async (req, res, next) => {
       verse = verses[index];
     }
 
+    res.json(formatVerse(verse));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/daily-verse/random — "Verse of the Moment": a fresh, non-deterministic
+// pick each call, for the shake/tap gesture screen.
+router.get('/random', async (req, res, next) => {
+  try {
+    const verses = await prisma.dailyVerse.findMany({ where: { isActive: true } });
+    if (!verses.length) {
+      return res.status(404).json({ message: 'No verses configured.' });
+    }
+    const verse = verses[Math.floor(Math.random() * verses.length)];
     res.json(formatVerse(verse));
   } catch (err) {
     next(err);
