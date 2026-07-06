@@ -44,21 +44,46 @@ function getPrayerForDay(language) {
 }
 
 function zonedParts(date, timeZone) {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  const mapped = Object.fromEntries(formatter.formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
-  return {
-    date: `${mapped.year}-${mapped.month}-${mapped.day}`,
-    hour: Number(mapped.hour),
-    minute: Number(mapped.minute),
-  };
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const mapped = Object.fromEntries(formatter.formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+    return {
+      date: `${mapped.year}-${mapped.month}-${mapped.day}`,
+      hour: Number(mapped.hour),
+      minute: Number(mapped.minute),
+    };
+  } catch (err) {
+    // Invalid timezone; fall back to UTC
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const mapped = Object.fromEntries(formatter.formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+    return {
+      date: `${mapped.year}-${mapped.month}-${mapped.day}`,
+      hour: Number(mapped.hour),
+      minute: Number(mapped.minute),
+    };
+  }
+}
+
+function hasReachedReminderTime(localNow, targetHour, targetMinute) {
+  if (localNow.hour > targetHour) return true;
+  if (localNow.hour < targetHour) return false;
+  return localNow.minute >= targetMinute;
 }
 
 async function runDailyPrayerEmailJob() {
@@ -79,13 +104,28 @@ async function runDailyPrayerEmailJob() {
 
     const dueUsers = users.filter((user) => {
       const timeZone = user.timezone || 'UTC';
-      const localNow = zonedParts(now, timeZone);
-      const targetHour = Number.isInteger(user.reminderHour) ? user.reminderHour : user.registeredHour;
-      const targetMinute = Number.isInteger(user.reminderMinute) ? user.reminderMinute : 0;
-      if (localNow.hour !== targetHour || localNow.minute !== targetMinute) return false;
-      if (!user.lastDailyEmailAt) return true;
-      const lastSentLocalDate = zonedParts(new Date(user.lastDailyEmailAt), timeZone).date;
-      return lastSentLocalDate !== localNow.date;
+      try {
+        const localNow = zonedParts(now, timeZone);
+        const targetHour = Number.isInteger(user.reminderHour)
+          ? user.reminderHour
+          : Number.isInteger(user.registeredHour)
+            ? user.registeredHour
+            : 9;
+        const targetMinute = Number.isInteger(user.reminderMinute) ? user.reminderMinute : 0;
+
+        // Send once the user's local reminder time has been reached.
+        // This prevents missed daily emails when the server wakes late,
+        // restarts, or drifts past the exact scheduled minute.
+        if (!hasReachedReminderTime(localNow, targetHour, targetMinute)) return false;
+
+        if (!user.lastDailyEmailAt) return true;
+        const lastSentLocalDate = zonedParts(new Date(user.lastDailyEmailAt), timeZone).date;
+        return lastSentLocalDate !== localNow.date;
+      } catch (err) {
+        // Skip users with invalid timezones
+        console.warn(`[DAILY-EMAIL] Skipping user ${user.email}: invalid timezone '${timeZone}'`);
+        return false;
+      }
     });
 
     if (!dueUsers.length) {
