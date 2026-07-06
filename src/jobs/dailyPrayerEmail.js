@@ -4,11 +4,11 @@
  * src/jobs/dailyPrayerEmail.js
  *
  * Sends a personalized daily prayer email to every user whose
- * registeredHour matches the current UTC hour AND who hasn't
- * received an email today.
+ * saved reminder time matches their local timezone AND who hasn't
+ * received an email yet for that local day.
  *
  * Call this from a cron-like interval in src/index.js:
- *   setInterval(runDailyPrayerEmailJob, 60 * 60 * 1000); // every hour
+ *   setInterval(runDailyPrayerEmailJob, 60 * 1000); // every minute
  *   runDailyPrayerEmailJob(); // also run on startup
  */
 
@@ -43,36 +43,99 @@ function getPrayerForDay(language) {
   return arr[dayOfYear % arr.length];
 }
 
-async function runDailyPrayerEmailJob() {
-  const nowHour = new Date().getUTCHours();
-  const today   = new Date().toISOString().split('T')[0];
+function zonedParts(date, timeZone) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const mapped = Object.fromEntries(formatter.formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+    return {
+      date: `${mapped.year}-${mapped.month}-${mapped.day}`,
+      hour: Number(mapped.hour),
+      minute: Number(mapped.minute),
+    };
+  } catch (err) {
+    // Invalid timezone; fall back to UTC
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const mapped = Object.fromEntries(formatter.formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+    return {
+      date: `${mapped.year}-${mapped.month}-${mapped.day}`,
+      hour: Number(mapped.hour),
+      minute: Number(mapped.minute),
+    };
+  }
+}
 
-  console.log(`[DAILY-EMAIL] Job running. UTC hour: ${nowHour}, date: ${today}`);
+function hasReachedReminderTime(localNow, targetHour, targetMinute) {
+  if (localNow.hour > targetHour) return true;
+  if (localNow.hour < targetHour) return false;
+  return localNow.minute >= targetMinute;
+}
+
+async function runDailyPrayerEmailJob() {
+  const now = new Date();
+
+  console.log(`[DAILY-EMAIL] Job running. UTC time: ${now.toISOString()}`);
 
   try {
-    // Find users whose registeredHour matches now AND haven't gotten email today
+    // Find users who are eligible; then match exact local reminder time per user.
     const users = await prisma.user.findMany({
       where: {
         isEmailVerified:   true,
         isDisabled:        false,
         dailyEmailEnabled: true,
-        registeredHour:    nowHour,
-        OR: [
-          { lastDailyEmailAt: null },
-          { lastDailyEmailAt: { lt: new Date(today + 'T00:00:00.000Z') } },
-        ],
       },
-      select: { id: true, email: true, fullName: true, language: true },
+      select: { id: true, email: true, fullName: true, language: true, timezone: true, reminderHour: true, reminderMinute: true, registeredHour: true, lastDailyEmailAt: true },
     });
 
-    if (!users.length) {
-      console.log(`[DAILY-EMAIL] No users to email at hour ${nowHour}.`);
+    const dueUsers = users.filter((user) => {
+      const timeZone = user.timezone || 'UTC';
+      try {
+        const localNow = zonedParts(now, timeZone);
+        const targetHour = Number.isInteger(user.reminderHour)
+          ? user.reminderHour
+          : Number.isInteger(user.registeredHour)
+            ? user.registeredHour
+            : 9;
+        const targetMinute = Number.isInteger(user.reminderMinute) ? user.reminderMinute : 0;
+
+        // Send once the user's local reminder time has been reached.
+        // This prevents missed daily emails when the server wakes late,
+        // restarts, or drifts past the exact scheduled minute.
+        if (!hasReachedReminderTime(localNow, targetHour, targetMinute)) return false;
+
+        if (!user.lastDailyEmailAt) return true;
+        const lastSentLocalDate = zonedParts(new Date(user.lastDailyEmailAt), timeZone).date;
+        return lastSentLocalDate !== localNow.date;
+      } catch (err) {
+        // Skip users with invalid timezones
+        console.warn(`[DAILY-EMAIL] Skipping user ${user.email}: invalid timezone '${timeZone}'`);
+        return false;
+      }
+    });
+
+    if (!dueUsers.length) {
+      console.log('[DAILY-EMAIL] No users due this minute.');
       return;
     }
 
-    console.log(`[DAILY-EMAIL] Sending to ${users.length} user(s) at hour ${nowHour}.`);
+    console.log(`[DAILY-EMAIL] Sending to ${dueUsers.length} user(s) this minute.`);
 
-    for (const user of users) {
+    for (const user of dueUsers) {
       try {
         const prayer = getPrayerForDay(user.language || 'en');
         await sendDailyPrayerEmail(user.email, user.fullName, prayer, user.language || 'en');
