@@ -14,20 +14,10 @@ services:
           property: connectionString
       - key: JWT_SECRET
         sync: false
-      - key: GOOGLE_CLIENT_IDS
-        sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: OPENAI_MODEL
-        value: gpt-5.4
-      - key: OPENAI_REASONING_EFFORT
-        value: medium
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
         sync: false
-      - key: SMTP_SECURE
-        value: "false"
       - key: SMTP_USER
         sync: false
       - key: SMTP_PASS

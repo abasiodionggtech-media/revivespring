@@ -1,6 +1,5 @@
 const jwt = require('jsonwebtoken');
 const prisma = require('../config/prisma');
-const { isPremiumUser } = require('../services/monetization');
 
 /**
  * Middleware: verify JWT and attach req.user
@@ -16,7 +15,6 @@ async function authenticate(req, res, next) {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     const user = await prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user) return res.status(401).json({ message: 'User not found.' });
-    if (user.isDisabled) return res.status(403).json({ message: 'Account disabled.' });
     if (!user.isEmailVerified) {
       return res.status(403).json({ message: 'Email not verified.' });
     }
@@ -34,7 +32,7 @@ async function authenticate(req, res, next) {
  * Middleware: require premium subscription
  */
 function requirePremium(req, res, next) {
-  if (!isPremiumUser(req.user)) {
+  if (req.user.subscriptionStatus !== 'premium') {
     return res.status(403).json({ message: 'Premium subscription required.' });
   }
   next();

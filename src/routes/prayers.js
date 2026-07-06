@@ -82,40 +82,6 @@ prayerRouter.post('/',
   }
 );
 
-// POST /api/prayers/complete
-// A prayer only counts after the user has kept it open long enough to engage.
-prayerRouter.post('/complete',
-  [body('mood').notEmpty(), body('prayer_text').notEmpty(), body('elapsed_seconds').isInt({ min: 10 })],
-  async (req, res, next) => {
-    if (validate(req, res)) return;
-    try {
-      const { mood, encouragement, bible_verse, bible_reference, prayer_text, action_step, language } = req.body;
-      const createdDate = new Date().toISOString().split('T')[0];
-      const existing = await prisma.prayer.findFirst({
-        where: { userId: req.user.id, mood, prayerText: prayer_text },
-      });
-
-      if (existing) {
-        return res.json({ recorded: false, duplicate: true, id: existing.id, created_date: existing.createdDate });
-      }
-
-      const prayer = await prisma.prayer.create({
-        data: {
-          userId: req.user.id, mood, encouragement, bibleVerse: bible_verse,
-          bibleReference: bible_reference, prayerText: prayer_text, actionStep: action_step,
-          language: language || req.user.language, createdDate,
-        },
-      });
-      await prisma.analytics.upsert({
-        where: { userId: req.user.id },
-        create: { userId: req.user.id, totalPrayers: 1 },
-        update: { totalPrayers: { increment: 1 } },
-      });
-      res.status(201).json({ recorded: true, id: prayer.id, created_date: createdDate });
-    } catch (err) { next(err); }
-  }
-);
-
 // DELETE /api/prayers/:id
 prayerRouter.delete('/:id', async (req, res, next) => {
   try {

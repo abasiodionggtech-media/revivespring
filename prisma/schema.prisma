@@ -13,9 +13,6 @@ model User {
   email               String    @unique
   passwordHash        String
   fullName            String?   @map("full_name")
-  authProvider        String?   @map("auth_provider")
-  googleSub           String?   @unique @map("google_sub")
-  profileImageUrl     String?   @map("profile_image_url")
   role                String    @default("user")      // "user" | "admin"
   subscriptionStatus  String    @default("free")
   salvationDate       String?
@@ -23,11 +20,8 @@ model User {
   testimony           String?
   language            String    @default("en")
   timezone            String    @default("UTC")        // for daily email timing
-  registeredHour      Int       @default(8)            // legacy fallback hour
-  reminderHour        Int       @default(9)  @map("reminder_hour")
-  reminderMinute      Int       @default(0)  @map("reminder_minute")
+  registeredHour      Int       @default(8)            // hour they registered (0-23), used for daily email
   dailyEmailEnabled   Boolean   @default(true)         // opt-in/out of daily prayer emails
-  pushNotificationsEnabled Boolean @default(true) @map("push_notifications_enabled")
   lastDailyEmailAt    DateTime?                        // last time daily email was sent
   isEmailVerified     Boolean   @default(false)
   isDisabled          Boolean   @default(false)
@@ -39,63 +33,11 @@ model User {
   journals   JournalEntry[]
   dailyGoals DailyGoal[]
   analytics  Analytics?
-  notifications Notification[]
-  supportTickets SupportTicket[]
-  accountSessions AccountSession[]
 
   @@map("users")
 }
 
 // ─── Prayer ───────────────────────────────────────────────────
-model Notification {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  type      String   @default("general")
-  title     String
-  body      String
-  metadata  Json?
-  readAt    DateTime? @map("read_at")
-  createdAt DateTime @default(now()) @map("created_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, readAt, createdAt])
-  @@map("notifications")
-}
-
-model SupportTicket {
-  id          String   @id @default(uuid())
-  userId      String   @map("user_id")
-  subject     String   @default("Customer care message")
-  status      String   @default("open")
-  priority    String   @default("normal")
-  messages    Json     @default("[]")
-  lastReplyAt DateTime? @map("last_reply_at")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, status, updatedAt])
-  @@map("support_tickets")
-}
-
-model AccountSession {
-  id          String   @id @default(uuid())
-  userId      String   @map("user_id")
-  client      String
-  ipAddress   String?  @map("ip_address")
-  userAgent   String?  @map("user_agent")
-  lastSeenAt  DateTime @default(now()) @map("last_seen_at")
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, client])
-  @@index([userId, lastSeenAt])
-  @@map("account_sessions")
-}
-
 model Prayer {
   id             String   @id @default(uuid())
   userId         String   @map("user_id")
@@ -135,24 +77,6 @@ model PrayerLibraryItem {
   updatedAt   DateTime @updatedAt
 
   @@map("prayer_library")
-}
-
-// Daily goals configured by admins and assigned to each user on first visit.
-model DailyGoalTemplate {
-  id              String   @id @default(uuid())
-  titleEn         String   @map("title_en")
-  titleFr         String?  @map("title_fr")
-  kind            String   @default("reflection") // "scripture" | "prayer" | "reflection" | "action"
-  contentEn       String?  @map("content_en")
-  contentFr       String?  @map("content_fr")
-  durationSeconds Int      @default(10) @map("duration_seconds")
-  isActive        Boolean  @default(true) @map("is_active")
-  sortOrder       Int      @default(0) @map("sort_order")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  dailyGoals      DailyGoal[]
-
-  @@map("daily_goal_templates")
 }
 
 // ─── Daily Verse (admin-managed) ──────────────────────────────
@@ -256,24 +180,17 @@ model JournalEntry {
 
 // ─── Daily Goal ───────────────────────────────────────────────
 model DailyGoal {
-  id              String   @id @default(uuid())
-  userId          String   @map("user_id")
-  templateId      String?  @map("template_id")
-  text            String
-  kind            String   @default("reflection")
-  content         String?
-  durationSeconds Int      @default(10) @map("duration_seconds")
-  completed       Boolean  @default(false)
-  completedAt     DateTime? @map("completed_at")
-  date            String
-  language        String   @default("en")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  text      String
+  completed Boolean  @default(false)
+  date      String
+  language  String   @default("en")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  template DailyGoalTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
-  @@unique([userId, date, templateId])
   @@map("daily_goals")
 }
 

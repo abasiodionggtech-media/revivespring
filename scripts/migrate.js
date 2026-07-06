@@ -27,14 +27,6 @@ async function runMigrations() {
       });
     }
     console.log('✅ [MIGRATE] Schema sync completed successfully');
-    const runtimeFixesPath = path.resolve(__dirname, '../prisma/support_runtime_fixes.sql');
-    if (fs.existsSync(runtimeFixesPath)) {
-      console.log('[MIGRATE] Applying support runtime fixes');
-      execSync(`npx prisma db execute --schema prisma/schema.prisma --file "${runtimeFixesPath}"`, {
-        stdio: 'inherit',
-        env: { ...process.env }
-      });
-    }
     return true;
   } catch (error) {
     console.error('[MIGRATE] Error applying schema:', error.message);

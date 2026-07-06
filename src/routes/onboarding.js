@@ -8,20 +8,6 @@ router.post('/save', async (req, res, next) => {
   try {
     const data = { onboardingData: req.body };
     if (req.body.language) data.language = req.body.language;
-    if (req.body.reminderTime) {
-      const hour = Number(req.body.reminderTime.hour);
-      const minute = Number(req.body.reminderTime.minute);
-      if (Number.isInteger(hour) && hour >= 0 && hour <= 23) {
-        data.reminderHour = hour;
-        data.registeredHour = hour;
-      }
-      if (Number.isInteger(minute) && minute >= 0 && minute <= 59) {
-        data.reminderMinute = minute;
-      }
-      if (req.body.reminderTime.timezone) data.timezone = String(req.body.reminderTime.timezone);
-      if (req.body.reminderTime.dailyEmailEnabled !== undefined) data.dailyEmailEnabled = !!req.body.reminderTime.dailyEmailEnabled;
-      if (req.body.reminderTime.pushNotificationsEnabled !== undefined) data.pushNotificationsEnabled = !!req.body.reminderTime.pushNotificationsEnabled;
-    }
     const user = await prisma.user.update({ where: { id: req.user.id }, data });
     res.json({ saved: true, onboardingData: user.onboardingData });
   } catch (err) {
