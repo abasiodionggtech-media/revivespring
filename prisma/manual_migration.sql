@@ -115,3 +115,93 @@ $$;
 
 -- Done!
 -- To verify: SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';
+CREATE TABLE IF NOT EXISTS "daily_goal_templates" (
+  "id" TEXT NOT NULL,
+  "title_en" TEXT NOT NULL,
+  "title_fr" TEXT,
+  "kind" TEXT NOT NULL DEFAULT 'reflection',
+  "content_en" TEXT,
+  "content_fr" TEXT,
+  "duration_seconds" INTEGER NOT NULL DEFAULT 10,
+  "is_active" BOOLEAN NOT NULL DEFAULT true,
+  "sort_order" INTEGER NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL,
+  CONSTRAINT "daily_goal_templates_pkey" PRIMARY KEY ("id")
+);
+
+ALTER TABLE "daily_goals" ADD COLUMN IF NOT EXISTS "template_id" TEXT;
+ALTER TABLE "daily_goals" ADD COLUMN IF NOT EXISTS "kind" TEXT NOT NULL DEFAULT 'reflection';
+ALTER TABLE "daily_goals" ADD COLUMN IF NOT EXISTS "content" TEXT;
+ALTER TABLE "daily_goals" ADD COLUMN IF NOT EXISTS "duration_seconds" INTEGER NOT NULL DEFAULT 10;
+ALTER TABLE "daily_goals" ADD COLUMN IF NOT EXISTS "completed_at" TIMESTAMP(3);
+
+CREATE TABLE IF NOT EXISTS "notifications" (
+  "id" TEXT PRIMARY KEY,
+  "user_id" TEXT NOT NULL,
+  "type" TEXT NOT NULL DEFAULT 'general',
+  "title" TEXT NOT NULL,
+  "body" TEXT NOT NULL,
+  "metadata" JSONB,
+  "read_at" TIMESTAMP(3),
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "notifications_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS "notifications_user_id_read_at_created_at_idx" ON "notifications"("user_id", "read_at", "created_at");
+
+CREATE TABLE IF NOT EXISTS "support_tickets" (
+  "id" TEXT PRIMARY KEY,
+  "user_id" TEXT NOT NULL,
+  "subject" TEXT NOT NULL DEFAULT 'Customer care message',
+  "status" TEXT NOT NULL DEFAULT 'open',
+  "priority" TEXT NOT NULL DEFAULT 'normal',
+  "messages" JSONB NOT NULL DEFAULT '[]',
+  "last_reply_at" TIMESTAMP(3),
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "support_tickets_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS "support_tickets_user_id_status_updated_at_idx" ON "support_tickets"("user_id", "status", "updated_at");
+
+-- Repair older support_tickets tables that were created before updated_at had a default.
+ALTER TABLE "support_tickets"
+  ALTER COLUMN "created_at" SET DEFAULT CURRENT_TIMESTAMP,
+  ALTER COLUMN "updated_at" SET DEFAULT CURRENT_TIMESTAMP;
+
+UPDATE "support_tickets"
+SET "created_at" = COALESCE("created_at", CURRENT_TIMESTAMP),
+    "updated_at" = COALESCE("updated_at", CURRENT_TIMESTAMP);
+
+CREATE TABLE IF NOT EXISTS "account_sessions" (
+  "id" TEXT PRIMARY KEY,
+  "user_id" TEXT NOT NULL,
+  "client" TEXT NOT NULL,
+  "ip_address" TEXT,
+  "user_agent" TEXT,
+  "last_seen_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "account_sessions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "account_sessions_user_id_client_key" ON "account_sessions"("user_id", "client");
+CREATE INDEX IF NOT EXISTS "account_sessions_user_id_last_seen_at_idx" ON "account_sessions"("user_id", "last_seen_at");
+
+CREATE TABLE IF NOT EXISTS "device_tokens" (
+  "id" TEXT PRIMARY KEY,
+  "user_id" TEXT NOT NULL,
+  "token" TEXT NOT NULL UNIQUE,
+  "platform" TEXT NOT NULL DEFAULT 'android',
+  "last_seen_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "device_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS "device_tokens_user_id_last_seen_at_idx" ON "device_tokens"("user_id", "last_seen_at");
+CREATE UNIQUE INDEX IF NOT EXISTS "daily_goals_user_id_date_template_id_key" ON "daily_goals"("user_id", "date", "template_id");
+DO $$ BEGIN
+  ALTER TABLE "daily_goals" ADD CONSTRAINT "daily_goals_template_id_fkey"
+  FOREIGN KEY ("template_id") REFERENCES "daily_goal_templates"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
