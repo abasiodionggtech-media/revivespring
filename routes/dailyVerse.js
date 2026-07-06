@@ -31,4 +31,19 @@ router.get('/', async (req, res, next) => {
   }
 });
 
+// GET /api/daily-verse/random — "Verse of the Moment": a fresh, non-deterministic
+// pick each call, for the shake/tap gesture screen.
+router.get('/random', async (req, res, next) => {
+  try {
+    const verses = await prisma.dailyVerse.findMany({ where: { isActive: true } });
+    if (!verses.length) {
+      return res.status(404).json({ message: 'No verses configured.' });
+    }
+    const verse = verses[Math.floor(Math.random() * verses.length)];
+    res.json(formatVerse(verse));
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

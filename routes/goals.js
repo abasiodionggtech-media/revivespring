@@ -79,10 +79,31 @@ async function updateStreak(userId, date) {
   const previous = analytics.lastActiveDate ? new Date(`${analytics.lastActiveDate}T00:00:00Z`) : null;
   const current = new Date(`${date}T00:00:00Z`);
   const diff = previous ? Math.round((current - previous) / 86400000) : null;
-  const currentStreak = diff === 1 ? analytics.currentStreak + 1 : 1;
+
+  let currentStreak;
+  let gracePeriodUsed = false;
+  let graceUsedOnDate = null;
+  if (diff === 1) {
+    // Consecutive day — streak grows, grace becomes available again for next time.
+    currentStreak = analytics.currentStreak + 1;
+  } else if (diff === 2 && !analytics.gracePeriodUsed) {
+    // Exactly one day was missed and this streak hasn't used its grace day yet — forgive it.
+    currentStreak = analytics.currentStreak + 1;
+    gracePeriodUsed = true;
+    graceUsedOnDate = new Date(current.getTime() - 86400000).toISOString().split('T')[0];
+  } else {
+    // Streak broken — more than one day missed, or grace already spent.
+    currentStreak = 1;
+  }
   await prisma.analytics.update({
     where: { userId },
-    data: { currentStreak, longestStreak: Math.max(currentStreak, analytics.longestStreak), lastActiveDate: date },
+    data: {
+      currentStreak,
+      longestStreak: Math.max(currentStreak, analytics.longestStreak),
+      lastActiveDate: date,
+      gracePeriodUsed,
+      graceUsedOnDate,
+    },
   });
 }
 

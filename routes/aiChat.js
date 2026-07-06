@@ -4,13 +4,21 @@
  * AI chat + conversation memory endpoints
  *
  * POST /api/ai/chat
- * GET  /api/ai/history?sessionId=...&userEmail=...
- * GET  /api/ai/sessions?userEmail=...
+ * GET  /api/ai/history?sessionId=...
+ * GET  /api/ai/sessions
  */
 
 const express = require('express');
 const https = require('https');
 const prisma = require('../config/prisma');
+const { authenticate } = require('../middleware/auth');
+const {
+  isPremiumUser,
+  aiUsageForToday,
+  localDateForTimeZone,
+  mergeUserMeta,
+  readUserMeta,
+} = require('../services/monetization');
 
 const router = express.Router();
 
@@ -31,21 +39,21 @@ function buildSystemPrompt(language, knowledgeBase) {
   }
 
   if (isFr) {
-    return 'Tu es un assistant spirituel bienveillant et compétent pour ReviveSpring, une application chrétienne de prière et de croissance spirituelle. Tu réponds toujours en français sauf si l’utilisateur parle anglais.\n\n' +
-      'TES CAPACITÉS:\n' +
-      '- Répondre aux questions sur la Bible avec précision et compassion\n' +
-      '- Fournir des références de versets bibliques pertinents\n' +
-      '- Offrir des prières personnalisées et des encouragements\n' +
-      '- Expliquer des concepts théologiques de manière simple et accessible\n' +
+    return 'Tu es un assistant spirituel bienveillant et competent pour ReviveSpring, une application chretienne de priere et de croissance spirituelle. Tu reponds toujours en francais sauf si l utilisateur parle anglais.\n\n' +
+      'TES CAPACITES:\n' +
+      '- Repondre aux questions sur la Bible avec precision et compassion\n' +
+      '- Fournir des references de versets bibliques pertinents\n' +
+      '- Offrir des prieres personnalisees et des encouragements\n' +
+      '- Expliquer des concepts theologiques de maniere simple et accessible\n' +
       '- Soutenir les utilisateurs dans leur parcours de foi\n' +
-      '- Répondre aux questions sur l’application ReviveSpring\n\n' +
-      'RÈGLES:\n' +
-      '- Toujours citer les versets avec leur référence exacte, par exemple Jean 3:16\n' +
-      '- Être chaleureux, empathique et encourageant\n' +
-      '- Ne jamais inventer des versets bibliques; si tu n’es pas sûr, dis-le\n' +
-      '- Garder les réponses concises mais complètes, environ 200 à 400 mots maximum\n' +
-      '- Ne jamais juger ou condamner l’utilisateur\n' +
-      '- Si quelqu’un semble en détresse, encourager la prière et un soutien professionnel' +
+      '- Repondre aux questions sur l application ReviveSpring\n\n' +
+      'REGLES:\n' +
+      '- Toujours citer les versets avec leur reference exacte, par exemple Jean 3:16\n' +
+      '- Etre chaleureux, empathique et encourageant\n' +
+      '- Ne jamais inventer des versets bibliques; si tu n es pas sur, dis-le\n' +
+      '- Garder les reponses concises mais completes, environ 200 a 400 mots maximum\n' +
+      '- Ne jamais juger ou condamner l utilisateur\n' +
+      '- Si quelqu un semble en detresse, encourager la priere et un soutien professionnel' +
       kbText;
   }
 
@@ -161,26 +169,45 @@ async function saveConversation({ sessionId, language, userEmail, message, reply
   }
 }
 
+async function consumeAiUnlock(user, unlockToken) {
+  if (isPremiumUser(user)) return user;
+  const meta = readUserMeta(user);
+  const unlock = meta.aiUnlock && typeof meta.aiUnlock === 'object' ? meta.aiUnlock : null;
+  const today = localDateForTimeZone(new Date(), user.timezone || 'UTC');
+  if (!unlock || !unlockToken || unlock.token !== unlockToken || unlock.date !== today) {
+    const error = new Error('Watch a short ad before using AI today.');
+    error.status = 403;
+    error.code = 'AI_AD_REQUIRED';
+    throw error;
+  }
+
+  const usage = aiUsageForToday(user);
+  const nextMeta = mergeUserMeta(user, {
+    aiUsage: { date: usage.date, used: usage.used + 1 },
+    aiUnlock: null,
+  });
+  return prisma.user.update({
+    where: { id: user.id },
+    data: { onboardingData: nextMeta },
+  });
+}
+
+router.use(authenticate);
+
 router.get('/history', async (req, res) => {
   try {
     const sessionId = (req.query.sessionId || '').toString().trim();
-    const userEmail = normalizeEmail(req.query.userEmail);
-    if (!sessionId && !userEmail) {
-      return res.status(422).json({ message: 'sessionId or userEmail is required.' });
+    if (!sessionId) {
+      return res.status(422).json({ message: 'sessionId is required.' });
     }
 
-    const where = sessionId ? { sessionId } : { userEmail };
     const conversation = await prisma.aiConversation.findFirst({
-      where,
+      where: { sessionId, userEmail: normalizeEmail(req.user.email) },
       orderBy: { updatedAt: 'desc' },
       select: { id: true, sessionId: true, userEmail: true, language: true, messages: true, updatedAt: true, createdAt: true },
     });
 
     if (!conversation) return res.json({ messages: [], sessionId, conversation: null });
-    if (userEmail && conversation.userEmail && conversation.userEmail !== userEmail) {
-      return res.status(404).json({ message: 'Conversation not found.' });
-    }
-
     const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
     res.json({ sessionId: conversation.sessionId, conversation, messages });
   } catch (err) {
@@ -191,9 +218,7 @@ router.get('/history', async (req, res) => {
 
 router.get('/sessions', async (req, res) => {
   try {
-    const userEmail = normalizeEmail(req.query.userEmail);
-    if (!userEmail) return res.status(422).json({ message: 'userEmail is required.' });
-
+    const userEmail = normalizeEmail(req.user.email);
     const rows = await prisma.aiConversation.findMany({
       where: { userEmail },
       orderBy: { updatedAt: 'desc' },
@@ -221,13 +246,17 @@ router.get('/sessions', async (req, res) => {
 });
 
 router.post('/chat', async (req, res) => {
-  const language = (req.body && req.body.language ? req.body.language : 'en').toString();
+  const language = (req.body && req.body.language ? req.body.language : req.user.language || 'en').toString();
+  let workingUser = req.user;
   try {
     const message = (req.body.message || '').trim();
-    const sessionId = (req.body.sessionId || `anon-${Date.now()}`).toString();
-    const userEmail = normalizeEmail(req.body.userEmail || null) || null;
+    const sessionId = (req.body.sessionId || `rs-user-${req.user.id}-${Date.now()}`).toString();
     const history = req.body.history || [];
     if (!message) return res.status(422).json({ message: 'Message is required.' });
+
+    if (!isPremiumUser(workingUser)) {
+      workingUser = await consumeAiUnlock(workingUser, (req.body.unlockToken || '').toString());
+    }
 
     let knowledgeBase = [];
     try {
@@ -248,17 +277,26 @@ router.post('/chat', async (req, res) => {
     const openAIRes = await openAIRequest(payload);
     const replyText = extractReply(openAIRes) || (
       language === 'fr'
-        ? "Je suis désolé, je n'ai pas pu traiter votre demande. Veuillez réessayer."
+        ? "Je suis desole, je n'ai pas pu traiter votre demande. Veuillez reessayer."
         : "I'm sorry, I couldn't process your request. Please try again."
     );
 
-    await saveConversation({ sessionId, language, userEmail, message, replyText });
+    await saveConversation({
+      sessionId,
+      language,
+      userEmail: workingUser.email,
+      message,
+      replyText,
+    });
     res.json({ reply: replyText, provider: 'openai', model, sessionId });
   } catch (err) {
     console.error('[AI-CHAT] Error:', err.message);
-    res.status(500).json({
+    const status = err.status || 500;
+    res.status(status).json({
+      message: err.message,
+      code: err.code,
       reply: language === 'fr'
-        ? "Je rencontre des difficultés techniques. Veuillez réessayer dans un moment."
+        ? "Je rencontre des difficultes techniques. Veuillez reessayer dans un moment."
         : "I'm having technical difficulties. Please try again in a moment.",
     });
   }

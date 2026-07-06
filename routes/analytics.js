@@ -33,6 +33,8 @@ router.get('/', async (req, res, next) => {
       currentStreak: analytics.currentStreak,
       longestStreak: analytics.longestStreak,
       visitCount: analytics.visitCount,
+      gracePeriodAvailable: !analytics.gracePeriodUsed,
+      lastActiveDate: analytics.lastActiveDate,
       totalGoals,
       completedGoals,
       weeklyGoals,

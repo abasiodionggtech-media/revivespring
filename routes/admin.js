@@ -73,20 +73,61 @@ const bcrypt  = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const prisma  = require('../config/prisma');
 const { authenticateAdmin } = require('../middleware/adminAuth');
-const { sendDailyPrayerEmail } = require('../services/email');
+const {
+  sendDailyPrayerEmail,
+  sendOtpEmail,
+  sendSecurityAlertEmail,
+  sendSupportReplyEmail,
+  getEmailDiagnostics,
+} = require('../services/email');
+const {
+  addAdminTicketReply,
+  listDeletionFeedback,
+  createNotification,
+  findAdminTicket,
+  listUserDeviceTokens,
+  listAdminTickets,
+  updateSupportTicketStatus,
+} = require('../services/supportStorage');
+const { sendPushToTokens } = require('../services/push');
 
 const router = express.Router();
 router.use(authenticateAdmin);
 
 const PAGE = 20;
+const ADMIN_ROLE_CONFIRMATION_CODE = 'Greatsuccess$';
 
 function ok(req, res) {
   const errors = validationResult(req);
   if (!errors.isEmpty()) { res.status(422).json({ message: errors.array()[0].msg }); return false; }
   return true;
 }
+
+function userSelect() {
+  const fields = prisma.user?.fields || {};
+  const select = {
+    id:true,
+    email:true,
+    fullName:true,
+    role:true,
+    subscriptionStatus:true,
+    isEmailVerified:true,
+    isDisabled:true,
+    language:true,
+    createdAt:true,
+    salvationPrayedAt:true,
+    _count: { select: { prayers:true, journals:true, dailyGoals:true } },
+  };
+  for (const optional of ['updatedAt', 'dailyEmailEnabled', 'authProvider', 'profileImageUrl']) {
+    if (fields[optional]) select[optional] = true;
+  }
+  return select;
+}
 function safe(user) {
   const { passwordHash, otpCode, otpExpiresAt, ...s } = user; return s;
+}
+function generateOtp() {
+  return String(Math.floor(100000 + Math.random() * 900000));
 }
 async function soft(promise, fallback) {
   try { return await promise; }
@@ -167,12 +208,7 @@ router.get('/users', async (req, res, next) => {
         prisma.user.findMany({
           where, orderBy: { createdAt: 'desc' },
           skip: (page-1)*limit, take: limit,
-          select: {
-            id:true, email:true, fullName:true, role:true, subscriptionStatus:true,
-            isEmailVerified:true, isDisabled:true, language:true, dailyEmailEnabled:true,
-            authProvider:true, profileImageUrl:true, salvationPrayedAt:true, createdAt:true, updatedAt:true,
-            _count: { select: { prayers:true, journals:true, dailyGoals:true } },
-          },
+          select: userSelect(),
         }),
         prisma.user.count({ where }),
       ]);
@@ -181,11 +217,7 @@ router.get('/users', async (req, res, next) => {
         prisma.user.findMany({
           where, orderBy: { createdAt: 'desc' },
           skip: (page-1)*limit, take: limit,
-          select: {
-            id:true, email:true, fullName:true, role:true, subscriptionStatus:true,
-            isEmailVerified:true, isDisabled:true, language:true, createdAt:true, updatedAt:true, salvationPrayedAt:true,
-            _count: { select: { prayers:true, journals:true, dailyGoals:true } },
-          },
+          select: userSelect(),
         }),
         prisma.user.count({ where }),
       ]);
@@ -241,19 +273,35 @@ router.delete('/users/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.patch('/users/:id/role',   [ body('role').isIn(['user','admin']) ], async (req, res, next) => {
+router.patch('/users/:id/role',   [ body('role').isIn(['user','admin']), body('confirmCode').optional().isString() ], async (req, res, next) => {
   if (!ok(req, res)) return;
   try {
     if (req.params.id === req.user.id) return res.status(400).json({ message: 'Cannot change your own role.' });
-    const user = await prisma.user.update({ where: { id: req.params.id }, data: { role: req.body.role } });
+    if (req.body.role === 'admin' && String(req.body.confirmCode || '') !== ADMIN_ROLE_CONFIRMATION_CODE) {
+      return res.status(403).json({ message: 'Admin confirmation code is required before granting admin access.' });
+    }
+    const updateData = { role: req.body.role };
+    if (req.body.role === 'admin') updateData.subscriptionStatus = 'premium';
+    const user = await prisma.user.update({ where: { id: req.params.id }, data: updateData });
     res.json(safe(user));
   } catch (err) { next(err); }
 });
 
 router.patch('/users/:id/verify', async (req, res, next) => {
   try {
-    const user = await prisma.user.update({ where: { id: req.params.id }, data: { isEmailVerified: true, otpCode: null, otpExpiresAt: null } });
-    res.json(safe(user));
+    const existing = await prisma.user.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ message: 'User not found.' });
+    if (existing.isEmailVerified) return res.status(400).json({ message: 'This account is already verified.' });
+    const otp = generateOtp();
+    await prisma.user.update({
+      where: { id: existing.id },
+      data: {
+        otpCode: otp,
+        otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+    await sendOtpEmail(existing.email, otp, existing.language);
+    res.json({ message: 'Verification email sent to the user.' });
   } catch (err) { next(err); }
 });
 
@@ -543,6 +591,12 @@ router.delete('/goals/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.get('/email/diagnostics', async (req, res, next) => {
+  try {
+    res.json(getEmailDiagnostics());
+  } catch (err) { next(err); }
+});
+
 /* ══════════════════════════════════════════════════════════
    DAILY EMAIL TOOLS
 ══════════════════════════════════════════════════════════ */
@@ -555,6 +609,18 @@ router.post('/email/test', async (req, res, next) => {
     };
     await sendDailyPrayerEmail(req.user.email, req.user.fullName || 'Admin', prayer, req.user.language || 'en');
     res.json({ message: 'Test email sent to ' + req.user.email });
+  } catch (err) { next(err); }
+});
+
+router.post('/email/test-security', async (req, res, next) => {
+  try {
+    await sendSecurityAlertEmail(req.user.email, req.user.fullName || 'Admin', {
+      client: 'the web app',
+      when: new Date().toLocaleString(),
+      ip: req.ip,
+      language: req.user.language || 'en',
+    });
+    res.json({ message: 'Test security email sent to ' + req.user.email });
   } catch (err) { next(err); }
 });
 
@@ -577,6 +643,92 @@ router.post('/email/broadcast', async (req, res, next) => {
       } catch { failed++; }
     }
     res.json({ message: 'Broadcast complete.', sent, failed, total: users.length });
+  } catch (err) { next(err); }
+});
+
+router.get('/support/tickets', async (req, res, next) => {
+  try {
+    const tickets = await listAdminTickets({
+      status: req.query.status,
+      limit: req.query.limit || 50,
+    });
+    res.json({ tickets });
+  } catch (err) { next(err); }
+});
+
+router.post('/support/tickets/:id/reply',
+  [body('message').trim().isLength({ min: 2 }).withMessage('Reply message is required.')],
+  async (req, res, next) => {
+    if (!ok(req, res)) return;
+    try {
+      const ticket = await findAdminTicket(req.params.id);
+      if (!ticket) return res.status(404).json({ message: 'Support ticket not found.' });
+
+      const updated = await addAdminTicketReply({
+        ticket,
+        admin: req.user,
+        message: req.body.message,
+        status: req.body.status || 'answered',
+      });
+
+      const notification = await createNotification({
+        userId: ticket.userId,
+        type: 'support_reply',
+        title: 'Customer care replied',
+        body: req.body.message,
+        metadata: { ticketId: ticket.id, subject: ticket.subject },
+      });
+
+      try {
+        const tokens = await listUserDeviceTokens(ticket.userId);
+        await sendPushToTokens(tokens, {
+          title: 'Customer care replied',
+          body: req.body.message,
+          data: {
+            notificationId: notification.id,
+            type: 'support_reply',
+            ticketId: ticket.id,
+            subject: ticket.subject,
+          },
+        });
+      } catch (err) {
+        console.error(`[PUSH] Support reply push failed for ${ticket.user.email}:`, err.message);
+      }
+
+      try {
+        await sendSupportReplyEmail(ticket.user.email, ticket.user.fullName, ticket, req.body.message);
+      } catch (err) {
+        console.error(`[EMAIL] Support reply email failed for ${ticket.user.email}:`, err.message);
+      }
+
+      res.json(updated);
+    } catch (err) { next(err); }
+  }
+);
+
+router.post('/support/tickets/:id/close', async (req, res, next) => {
+  try {
+    const ticket = await findAdminTicket(req.params.id);
+    if (!ticket) return res.status(404).json({ message: 'Support ticket not found.' });
+
+    const updated = await updateSupportTicketStatus(ticket.id, 'closed');
+
+    await createNotification({
+      userId: ticket.userId,
+      type: 'support_reply',
+      title: 'Customer care closed your conversation',
+      body: 'This support conversation has been closed. You can still review the full chat history in ReviveSpring.',
+      metadata: { ticketId: ticket.id, subject: ticket.subject, status: 'closed' },
+    });
+
+    res.json({ ...updated, user: ticket.user });
+  } catch (err) { next(err); }
+});
+
+router.get('/deletion-feedback', async (req, res, next) => {
+  try {
+    const items = await listDeletionFeedback(req.query.limit || 100);
+    res.json({ feedback: items });
   } catch (err) { next(err); }
 });
 

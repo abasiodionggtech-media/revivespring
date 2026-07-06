@@ -6,8 +6,27 @@ const crypto = require('crypto');
 const { OAuth2Client } = require('google-auth-library');
 const { body, validationResult } = require('express-validator');
 const prisma = require('../config/prisma');
-const { sendOtpEmail } = require('../services/email');
+const {
+  sendOtpEmail,
+  sendSecurityAlertEmail,
+  sendPasswordResetEmail,
+  sendSubscriptionConfirmationEmail,
+} = require('../services/email');
 const { authenticate } = require('../middleware/auth');
+const { effectivePlan } = require('../services/monetization');
+
+// Ensure functions are available
+if (typeof sendPasswordResetEmail !== 'function') {
+  console.warn('[AUTH] Warning: sendPasswordResetEmail not properly imported from email service');
+}
+const {
+  createDeletionFeedback,
+  createNotification,
+  findOtherAccountSession,
+  listUserDeviceTokens,
+  upsertAccountSession,
+} = require('../services/supportStorage');
+const { sendPushToTokens } = require('../services/push');
 
 const router = express.Router();
 const googleClient = new OAuth2Client();
@@ -15,6 +34,11 @@ const googleClient = new OAuth2Client();
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function generateOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function verificationLink(email) {
+  const baseUrl = (process.env.WEB_APP_URL || 'https://revivespring.com').replace(/\/+$/, '');
+  return `${baseUrl}/verify?email=${encodeURIComponent(email)}`;
 }
 
 function signToken(userId) {
@@ -27,6 +51,8 @@ function safeUser(user) {
   const { passwordHash, otpCode, otpExpiresAt, ...safe } = user;
   return {
     ...safe,
+    subscriptionStatus: effectivePlan(user),
+    plan: effectivePlan(user),
     hasCompletedOnboarding: !!(safe.onboardingData && typeof safe.onboardingData === 'object' && safe.onboardingData.completedAt),
   };
 }
@@ -34,6 +60,11 @@ function safeUser(user) {
 function handleValidation(req, res) {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    try {
+      console.warn(`[AUTH] Validation failed [${req.id || 'no-id'}] ${req.method} ${req.originalUrl}:`, errors.array());
+    } catch (logErr) {
+      console.warn('[AUTH] Validation failed (could not log request info)');
+    }
     res.status(422).json({ message: errors.array()[0].msg });
     return true;
   }
@@ -60,6 +91,17 @@ function googleAudiences() {
     .filter(Boolean);
 }
 
+function decodeJwtPayloadUnsafe(idToken) {
+  try {
+    const [, payload] = idToken.split('.');
+    if (!payload) return {};
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(Buffer.from(normalized, 'base64').toString('utf8'));
+  } catch {
+    return {};
+  }
+}
+
 async function verifyGoogleToken(idToken) {
   const audiences = googleAudiences();
   if (!audiences.length) {
@@ -67,7 +109,19 @@ async function verifyGoogleToken(idToken) {
     error.status = 500;
     throw error;
   }
-  const ticket = await googleClient.verifyIdToken({ idToken, audience: audiences });
+  let ticket;
+  try {
+    ticket = await googleClient.verifyIdToken({ idToken, audience: audiences });
+  } catch (err) {
+    const payload = decodeJwtPayloadUnsafe(idToken);
+    console.error('[AUTH] Google audience mismatch', {
+      tokenAudience: payload.aud || null,
+      configuredAudiences: audiences,
+    });
+    const error = new Error('Google Sign-In is using a different OAuth client ID than the backend. Update Render GOOGLE_WEB_CLIENT_ID/GOOGLE_CLIENT_IDS and rebuild the mobile app with env/release.json.');
+    error.status = 401;
+    throw error;
+  }
   const payload = ticket.getPayload();
   if (!payload || !payload.email) {
     const error = new Error('Google account did not return an email address.');
@@ -80,6 +134,72 @@ async function verifyGoogleToken(idToken) {
     throw error;
   }
   return payload;
+}
+
+function clientLabel(client) {
+  if (client === 'mobile') return 'the mobile app';
+  if (client === 'web') return 'the web app';
+  return client || 'a device';
+}
+
+async function recordSignInEvent(req, user, client = 'web') {
+  try {
+    const normalizedClient = ['web', 'mobile'].includes(client) ? client : 'web';
+    const otherSession = await findOtherAccountSession(user.id, normalizedClient);
+    const now = new Date();
+    const title = otherSession ? 'Account signed in on another device' : 'New account sign-in';
+    const body = otherSession
+      ? `Your account is now signed in on ${clientLabel(normalizedClient)} and was already active on ${clientLabel(otherSession.client)}.`
+      : `Your account was signed in on ${clientLabel(normalizedClient)}.`;
+
+    if (otherSession) {
+      const notification = await createNotification({
+        userId: user.id,
+        type: 'security',
+        title,
+        body,
+        metadata: {
+          client: normalizedClient,
+          otherClient: otherSession.client,
+          ip: req.ip,
+          userAgent: req.get('user-agent') || null,
+        },
+      });
+
+      try {
+        const tokens = await listUserDeviceTokens(user.id);
+        await sendPushToTokens(tokens, {
+          title,
+          body,
+          data: {
+            notificationId: notification.id,
+            type: 'security',
+            client: normalizedClient,
+            otherClient: otherSession.client,
+          },
+        });
+      } catch (err) {
+        console.error(`[PUSH] Sign-in alert failed for ${user.email}:`, err.message);
+      }
+    }
+
+    await upsertAccountSession({
+      userId: user.id,
+      client: normalizedClient,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || null,
+    });
+
+    await sendSecurityAlertEmail(user.email, user.fullName, {
+      client: clientLabel(normalizedClient),
+      otherClient: otherSession ? clientLabel(otherSession.client) : null,
+      when: now.toLocaleString(),
+      ip: req.ip,
+      language: user.language || 'en',
+    });
+  } catch (err) {
+    console.error(`[SECURITY] Sign-in notification failed for ${user.email}:`, err.message);
+  }
 }
 
 // POST /api/auth/google
@@ -138,6 +258,7 @@ router.post(
         });
       }
 
+      await recordSignInEvent(req, user, req.body.client || 'web');
       return res.json({ token: signToken(user.id), user: safeUser(user) });
     } catch (err) {
       if (err.status) return res.status(err.status).json({ message: err.message });
@@ -182,9 +303,8 @@ router.post(
           if (!await deliverOtp(res, email, otp, existing.language)) return;
           return res.status(201).json({
             message: 'Account exists but email not verified. A new code has been sent.',
-            token: signToken(existing.id),
-            user: safeUser(existing),
             requiresVerification: true,
+            verifyUrl: verificationLink(email),
           });
         }
         return res.status(409).json({ message: 'Email already in use.' });
@@ -213,9 +333,8 @@ router.post(
       // Return immediately with token so Flutter can navigate to verify screen
       return res.status(201).json({
         message: 'Account created. Please verify your email.',
-        token: signToken(user.id),
-        user: safeUser(user),
         requiresVerification: true,
+        verifyUrl: verificationLink(email),
       });
     } catch (err) {
       next(err);
@@ -265,11 +384,11 @@ router.post(
         return res.status(403).json({
           message: 'Email not verified. A verification code has been sent.',
           requiresVerification: true,
-          token: signToken(user.id),
-          user: safeUser(user),
+          verifyUrl: verificationLink(email),
         });
       }
 
+      await recordSignInEvent(req, user, req.body.client || 'web');
       return res.json({
         token: signToken(user.id),
         user: safeUser(user),
@@ -312,6 +431,8 @@ router.post(
         },
       });
 
+      await recordSignInEvent(req, updated, req.body.client || 'web');
+
       return res.json({
         message: 'Email verified successfully.',
         token: signToken(user.id),
@@ -346,7 +467,10 @@ router.post(
         },
       });
       if (!await deliverOtp(res, email, otp, user.language)) return;
-      return res.json({ message: 'Verification code resent.' });
+      return res.json({
+        message: 'Verification code resent.',
+        verifyUrl: verificationLink(email),
+      });
     } catch (err) {
       next(err);
     }
@@ -408,6 +532,31 @@ router.patch(
 );
 
 // ─── POST /api/auth/change-password ──────────────────────────────────────────
+router.delete(
+  '/me',
+  authenticate,
+  [
+    body('reason').trim().isLength({ min: 3, max: 120 }).withMessage('Please share a short reason for deleting your account.'),
+    body('feedback').trim().isLength({ min: 5, max: 2000 }).withMessage('Please tell us why you are leaving before deleting your account.'),
+  ],
+  async (req, res, next) => {
+    if (handleValidation(req, res)) return;
+    try {
+      await createDeletionFeedback({
+        userId: req.user.id,
+        email: req.user.email,
+        fullName: req.user.fullName,
+        reason: req.body.reason,
+        feedback: req.body.feedback,
+      });
+      await prisma.user.delete({ where: { id: req.user.id } });
+      return res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 router.post(
   '/change-password',
   authenticate,
@@ -429,6 +578,95 @@ router.post(
       const passwordHash = await bcrypt.hash(newPassword, 12);
       await prisma.user.update({ where: { id: req.user.id }, data: { passwordHash } });
       return res.json({ message: 'Password updated successfully.' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  '/forgot-password',
+  [body('email').isEmail().normalizeEmail().withMessage('Valid email required.')],
+  async (req, res, next) => {
+    if (handleValidation(req, res)) return;
+    try {
+      const { email } = req.body;
+      const user = await prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        return res.status(200).json({ message: 'If this email exists, a reset code has been sent.' });
+      }
+      if (user.authProvider === 'google') {
+        return res.status(400).json({ message: 'This account uses Google Sign-In. Use Google to sign in.' });
+      }
+      const otp = generateOtp();
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          otpCode: otp,
+          otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      });
+      
+      // Send password reset email
+      if (typeof sendPasswordResetEmail === 'function') {
+        try {
+          await sendPasswordResetEmail(user.email, user.fullName || user.email, otp, user.language || 'en');
+        } catch (emailErr) {
+          console.error('[AUTH] Failed to send password reset email:', emailErr.message);
+          // Continue anyway to not reveal whether email exists
+        }
+      } else {
+        console.warn('[AUTH] sendPasswordResetEmail function not available');
+      }
+      
+      return res.json({ message: 'If this email exists, a reset code has been sent.' });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  '/reset-password',
+  [
+    body('email').isEmail().normalizeEmail().withMessage('Valid email required.'),
+    body('otp').isLength({ min: 6, max: 6 }).withMessage('Reset code must be 6 digits.'),
+    body().custom((value, { req }) => {
+      const newPassword = req.body.newPassword || req.body.password || req.body.new_password;
+      if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+        throw new Error('New password must be at least 6 characters.');
+      }
+      return true;
+    }),
+  ],
+  async (req, res, next) => {
+    if (handleValidation(req, res)) return;
+    try {
+      const { email, otp } = req.body;
+      const newPassword = req.body.newPassword || req.body.password || req.body.new_password;
+      const user = await prisma.user.findUnique({ where: { email } });
+      if (!user) return res.status(404).json({ message: 'User not found.' });
+      if (user.authProvider === 'google') {
+        return res.status(400).json({ message: 'This account uses Google Sign-In and does not have a password to reset.' });
+      }
+      if (user.otpCode !== otp || !user.otpExpiresAt || new Date() > user.otpExpiresAt) {
+        return res.status(400).json({ message: 'Invalid or expired reset code. Request a new one.' });
+      }
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash,
+          otpCode: null,
+          otpExpiresAt: null,
+        },
+      });
+      try {
+        console.log(`[AUTH] Password changed for ${user.email}`);
+      } catch (logErr) {
+        console.log('[AUTH] Password changed (could not log email)');
+      }
+      return res.json({ message: 'Password changed successfully. Please log in again.' });
     } catch (err) {
       next(err);
     }
