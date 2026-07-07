@@ -4,12 +4,23 @@ const prisma  = require('../config/prisma');
 
 const router = express.Router();
 
-const formatVerse = verse => ({
-  id: verse.id,
-  verse: verse.verseEn,
-  verse_fr: verse.verseFr,
-  reference: verse.reference,
-});
+const VERSION_FIELD = {
+  NIV: 'verseEn',
+  KJV: 'verseKjv',
+  NLT: 'verseNlt',
+  ESV: 'verseEsv',
+};
+
+function formatVerse(verse, version) {
+  const field = VERSION_FIELD[version] || 'verseEn';
+  return {
+    id: verse.id,
+    verse: verse[field] || verse.verseEn, // fall back to NIV wording if that translation isn't filled in yet
+    verse_fr: verse.verseFr,
+    reference: verse.reference,
+    version: VERSION_FIELD[version] ? version : 'NIV',
+  };
+}
 
 router.get('/', async (req, res, next) => {
   try {
@@ -25,7 +36,7 @@ router.get('/', async (req, res, next) => {
       verse = verses[index];
     }
 
-    res.json(formatVerse(verse));
+    res.json(formatVerse(verse, req.user.bibleVersion));
   } catch (err) {
     next(err);
   }
@@ -40,7 +51,7 @@ router.get('/random', async (req, res, next) => {
       return res.status(404).json({ message: 'No verses configured.' });
     }
     const verse = verses[Math.floor(Math.random() * verses.length)];
-    res.json(formatVerse(verse));
+    res.json(formatVerse(verse, req.user.bibleVersion));
   } catch (err) {
     next(err);
   }

@@ -143,7 +143,7 @@ router.get('/stats', async (req, res, next) => {
     const thisMonth= new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
     const [
-      totalUsers, verifiedUsers, adminUsers, premiumUsers, disabledUsers,
+      totalUsers, verifiedUsers, adminUsers, premiumUsers, standardUsers, disabledUsers,
       totalPrayers, totalJournal, totalGoals,
       newUsersThisMonth, salvationUsers,
       recentUsers,
@@ -152,6 +152,7 @@ router.get('/stats', async (req, res, next) => {
       soft(prisma.user.count({ where: { isEmailVerified: true } }), 0),
       soft(prisma.user.count({ where: { role: 'admin' } }), 0),
       soft(prisma.user.count({ where: { subscriptionStatus: 'premium' } }), 0),
+      soft(prisma.user.count({ where: { subscriptionStatus: 'standard' } }), 0),
       soft(prisma.user.count({ where: { isDisabled: true } }), 0),
       soft(prisma.prayer.count(), 0),
       soft(prisma.journalEntry.count(), 0),
@@ -176,10 +177,10 @@ router.get('/stats', async (req, res, next) => {
 
     res.json({
       totalUsers, verifiedUsers, unverifiedUsers: totalUsers - verifiedUsers,
-      adminUsers, premiumUsers, freeUsers: totalUsers - premiumUsers,
+      adminUsers, premiumUsers, standardUsers, freeUsers: totalUsers - premiumUsers - standardUsers,
       disabledUsers, newUsersThisMonth, salvationUsers, dailyActiveUsers,
       totalPrayers, totalJournal, totalGoals,
-      conversionRate: totalUsers > 0 ? Math.round(premiumUsers / totalUsers * 100) : 0,
+      conversionRate: totalUsers > 0 ? Math.round((premiumUsers + standardUsers) / totalUsers * 100) : 0,
       topMoods: topMoods.map((item) => ({ mood: item.mood, count: item._count.mood })),
       recentUsers,
     });
@@ -305,7 +306,7 @@ router.patch('/users/:id/verify', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.patch('/users/:id/plan',   [ body('plan').isIn(['free','premium']) ], async (req, res, next) => {
+router.patch('/users/:id/plan',   [ body('plan').isIn(['free','standard','premium']) ], async (req, res, next) => {
   if (!ok(req, res)) return;
   try {
     const user = await prisma.user.update({ where: { id: req.params.id }, data: { subscriptionStatus: req.body.plan } });

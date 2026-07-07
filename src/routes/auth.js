@@ -496,6 +496,7 @@ router.patch(
   [
     body('full_name').optional().trim().notEmpty(),
     body('language').optional().isIn(['en', 'fr']),
+    body('bibleVersion').optional().isIn(['NIV', 'KJV', 'NLT', 'ESV']),
     body('salvationDate').optional().isString(),
     body('testimony').optional().isString(),
     body('dailyEmailEnabled').optional().isBoolean(),
@@ -511,6 +512,7 @@ router.patch(
       const data = {};
       if (req.body.full_name)                   data.fullName      = req.body.full_name;
       if (req.body.language)                     data.language      = req.body.language;
+      if (req.body.bibleVersion)                  data.bibleVersion  = req.body.bibleVersion;
       if (req.body.salvationDate !== undefined)  data.salvationDate = req.body.salvationDate;
       if (req.body.testimony     !== undefined)  data.testimony     = req.body.testimony;
       if (req.body.dailyEmailEnabled !== undefined) data.dailyEmailEnabled = req.body.dailyEmailEnabled;

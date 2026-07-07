@@ -9,6 +9,7 @@ const {
   aiUsageForToday,
   effectivePlan,
   isPremiumUser,
+  isPaidUser,
   mergeUserMeta,
   readUserMeta,
 } = require('../services/monetization');
@@ -21,10 +22,13 @@ const DEFAULT_SETTINGS = {
   ads_banner_enabled: 'true',
   ai_ad_unlock_enabled: 'true',
   ai_ad_daily_limit: '5',
-  subscription_price_ngn: '50',
-  subscription_price_label_en: '50 naira / month',
-  subscription_price_label_fr: '50 nairas / mois',
-  subscription_google_play_product_id: 'revivespring_premium_monthly',
+  subscription_currency: 'USD',
+  subscription_first_term_months: '3',
+  subscription_first_term_discount_percent: '4',
+  subscription_standard_price_usd: '9.25',
+  subscription_premium_price_usd: '15.50',
+  subscription_google_play_standard_product_id: 'revivespring_standard_3mo',
+  subscription_google_play_premium_product_id: 'revivespring_premium_3mo',
   ad_banner_title_en: 'Grow with ReviveSpring Premium',
   ad_banner_title_fr: 'Grandissez avec ReviveSpring Premium',
   ad_banner_body_en: 'Remove ads, unlock premium features, and keep your prayer journey uninterrupted.',
@@ -88,24 +92,64 @@ async function loadSettings() {
   return settings;
 }
 
+function round2(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function buildPlans(settings) {
+  const months = Math.max(1, parseInt(settings.subscription_first_term_months || '3', 10) || 3);
+  const discountPercent = Math.max(0, parseFloat(settings.subscription_first_term_discount_percent || '4') || 0);
+  const currency = settings.subscription_currency || 'USD';
+
+  const makePlan = (tier, monthlyPrice, productId, labelEn, labelFr) => {
+    const fullTermPrice = round2(monthlyPrice * months);
+    const firstTermPrice = round2(fullTermPrice * (1 - discountPercent / 100));
+    return {
+      tier,
+      currency,
+      monthlyPriceUsd: monthlyPrice,
+      termMonths: months,
+      fullTermPriceUsd: fullTermPrice,
+      firstTermDiscountPercent: discountPercent,
+      firstTermPriceUsd: firstTermPrice,
+      googlePlayProductId: productId,
+      labelEn,
+      labelFr,
+    };
+  };
+
+  return [
+    makePlan(
+      'standard',
+      Number(settings.subscription_standard_price_usd || '9.25') || 9.25,
+      settings.subscription_google_play_standard_product_id,
+      `$${settings.subscription_standard_price_usd || '9.25'} / month`,
+      `${settings.subscription_standard_price_usd || '9.25'} $ / mois`,
+    ),
+    makePlan(
+      'premium',
+      Number(settings.subscription_premium_price_usd || '15.50') || 15.5,
+      settings.subscription_google_play_premium_product_id,
+      `$${settings.subscription_premium_price_usd || '15.50'} / month`,
+      `${settings.subscription_premium_price_usd || '15.50'} $ / mois`,
+    ),
+  ];
+}
+
 function buildStatus(user, settings) {
   const usage = aiUsageForToday(user);
   const adViews = aiAdViewsForToday(user);
   const maxDailyUses = Math.max(0, parseInt(settings.ai_ad_daily_limit || '5', 10) || 5);
   const premium = isPremiumUser(user);
+  const paid = isPaidUser(user);
   const remainingToday = premium ? maxDailyUses : Math.max(0, maxDailyUses - adViews.used);
 
   return {
     plan: effectivePlan(user),
     isPremium: premium,
+    isPaid: paid,
     isAdmin: user.role === 'admin',
-    pricing: {
-      currency: 'NGN',
-      amountNgn: Number(settings.subscription_price_ngn || '50') || 50,
-      googlePlayProductId: settings.subscription_google_play_product_id,
-      labelEn: settings.subscription_price_label_en,
-      labelFr: settings.subscription_price_label_fr,
-    },
+    plans: buildPlans(settings),
     ads: {
       enabled: toBool(settings.ads_enabled, true),
       bannerEnabled: toBool(settings.ads_banner_enabled, true),
@@ -209,6 +253,15 @@ router.post('/subscription/mobile-sync', async (req, res, next) => {
       acknowledged,
     } = req.body || {};
 
+    const settings = await loadSettings();
+    const standardProductId = settings.subscription_google_play_standard_product_id;
+    const premiumProductId = settings.subscription_google_play_premium_product_id;
+    // Default to premium for unrecognized/legacy product IDs (e.g. the old
+    // single monthly SKU) so existing purchasers aren't downgraded.
+    const tier = productId === standardProductId ? 'standard' : 'premium';
+
+    const termMonths = Math.max(1, parseInt(settings.subscription_first_term_months || '3', 10) || 3);
+
     const currentSubscription = readUserMeta(req.user).subscription || {};
     const rawPurchaseTime = Number(purchaseTime);
     const parsedPurchaseTime = new Date(
@@ -223,11 +276,13 @@ router.post('/subscription/mobile-sync', async (req, res, next) => {
     const baseDate = existingExpiry.getTime() > Date.now()
       ? existingExpiry
       : normalizedPurchaseTime;
-    const expiresAt = new Date(baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(baseDate);
+    expiresAt.setMonth(expiresAt.getMonth() + termMonths);
 
     const nextMeta = mergeUserMeta(req.user, {
       subscription: {
         provider: 'google_play',
+        tier,
         orderId: orderId || null,
         productId: productId || null,
         purchaseToken: purchaseToken || null,
@@ -237,7 +292,8 @@ router.post('/subscription/mobile-sync', async (req, res, next) => {
         packageName: packageName || null,
         acknowledged: acknowledged === true,
         recordedAt: new Date().toISOString(),
-        durationDays: 30,
+        durationDays: termMonths * 30,
+        termMonths,
         expiresAt: expiresAt.toISOString(),
       },
     });
@@ -245,7 +301,7 @@ router.post('/subscription/mobile-sync', async (req, res, next) => {
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
       data: {
-        subscriptionStatus: 'premium',
+        subscriptionStatus: tier,
         onboardingData: nextMeta,
       },
     });
