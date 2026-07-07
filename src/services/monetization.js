@@ -17,6 +17,8 @@ function localDateForTimeZone(date, timeZone) {
   return formatter.format(date);
 }
 
+const PLAN_RANK = { free: 0, standard: 1, premium: 2 };
+
 function effectivePlan(user) {
   if (user && user.role === 'admin') {
     return 'premium';
@@ -27,7 +29,9 @@ function effectivePlan(user) {
   if (subscription.expiresAt) {
     const expiresAt = new Date(subscription.expiresAt);
     if (!Number.isNaN(expiresAt.getTime()) && expiresAt > new Date()) {
-      return 'premium';
+      // `tier` was added alongside the standard/premium split — older purchases
+      // recorded before that always meant premium, so default to it here.
+      return subscription.tier === 'standard' ? 'standard' : 'premium';
     }
     return 'free';
   }
@@ -37,6 +41,14 @@ function effectivePlan(user) {
 
 function isPremiumUser(user) {
   return effectivePlan(user) === 'premium';
+}
+
+function isPaidUser(user) {
+  return PLAN_RANK[effectivePlan(user)] >= PLAN_RANK.standard;
+}
+
+function planAtLeast(user, tier) {
+  return PLAN_RANK[effectivePlan(user)] >= (PLAN_RANK[tier] ?? 99);
 }
 
 function aiUsageForToday(user, date = new Date()) {
@@ -65,6 +77,19 @@ function aiAdViewsForToday(user, date = new Date()) {
   };
 }
 
+function dailyUsageFor(user, metaKey, date = new Date()) {
+  const meta = readUserMeta(user);
+  const today = localDateForTimeZone(date, user && user.timezone ? user.timezone : 'UTC');
+  const raw = meta[metaKey] && typeof meta[metaKey] === 'object' ? meta[metaKey] : {};
+  if (raw.date !== today) {
+    return { date: today, used: 0 };
+  }
+  return {
+    date: today,
+    used: Number.isFinite(raw.used) ? Number(raw.used) : 0,
+  };
+}
+
 function mergeUserMeta(user, patch) {
   const current = readUserMeta(user);
   return {
@@ -76,8 +101,12 @@ function mergeUserMeta(user, patch) {
 module.exports = {
   aiAdViewsForToday,
   aiUsageForToday,
+  dailyUsageFor,
   effectivePlan,
   isPremiumUser,
+  isPaidUser,
+  planAtLeast,
+  PLAN_RANK,
   localDateForTimeZone,
   mergeUserMeta,
   readUserMeta,
