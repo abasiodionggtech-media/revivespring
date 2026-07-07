@@ -22,6 +22,7 @@ model User {
   salvationPrayedAt   DateTime?                        // when they prayed salvation prayer
   testimony           String?
   language            String    @default("en")
+  bibleVersion        String    @default("NIV") @map("bible_version")
   timezone            String    @default("UTC")        // for daily email timing
   registeredHour      Int       @default(8)            // legacy fallback hour
   reminderHour        Int       @default(9)  @map("reminder_hour")
@@ -43,6 +44,23 @@ model User {
   supportTickets SupportTicket[]
   accountSessions AccountSession[]
   moodLogs MoodLog[]
+  challengeEnrollments ChallengeEnrollment[]
+  fasts Fast[]
+  readingPlanProgress ReadingPlanProgress[]
+  userMilestones UserMilestone[]
+  memoryCardProgress MemoryCardProgress[]
+  weeklyReviews WeeklyReview[]
+  prayerRequests PrayerRequest[]
+  prayerRequestPrays PrayerRequestPray[]
+  testimonies Testimony[]
+  testimonyReactions TestimonyReaction[]
+  accountabilityInvites AccountabilityInvite[]
+  partnershipsAsA AccountabilityPartnership[] @relation("PartnerA")
+  partnershipsAsB AccountabilityPartnership[] @relation("PartnerB")
+  prayerGroupMemberships PrayerGroupMembership[]
+  mentorProfile MentorProfile?
+  mentorshipsAsMentor MentorshipMatch[] @relation("MentorMatches")
+  mentorshipsAsMentee MentorshipMatch[] @relation("MenteeMatches")
 
   @@map("users")
 }
@@ -178,8 +196,11 @@ model DailyGoalTemplate {
 // ─── Daily Verse (admin-managed) ──────────────────────────────
 model DailyVerse {
   id        String   @id @default(uuid())
-  verseEn   String   @map("verse_en")
+  verseEn   String   @map("verse_en")               // NIV wording (default translation)
   verseFr   String?  @map("verse_fr")
+  verseKjv  String?  @map("verse_kjv")
+  verseNlt  String?  @map("verse_nlt")
+  verseEsv  String?  @map("verse_esv")
   reference String
   activeOn  String?  @map("active_on")            // "YYYY-MM-DD" or null for default
   isActive  Boolean  @default(true) @map("is_active")
@@ -201,6 +222,364 @@ model Declaration {
   updatedAt DateTime @updatedAt
 
   @@map("declarations")
+}
+
+// ─── 30-Day Prayer Challenges (admin-managed content + progress) ──
+model Challenge {
+  id            String   @id @default(uuid())
+  titleEn       String   @map("title_en")
+  titleFr       String?  @map("title_fr")
+  descriptionEn String?  @map("description_en")
+  descriptionFr String?  @map("description_fr")
+  durationDays  Int      @default(30) @map("duration_days")
+  category      String   @default("general")
+  isActive      Boolean  @default(true) @map("is_active")
+  sortOrder     Int      @default(0) @map("sort_order")
+  eventId       String?  @map("event_id") // optional — links this challenge to a Seasonal Event
+  createdAt     DateTime @default(now())
+
+  enrollments ChallengeEnrollment[]
+
+  @@map("challenges")
+}
+
+model ChallengeEnrollment {
+  id                String    @id @default(uuid())
+  userId            String    @map("user_id")
+  challengeId       String    @map("challenge_id")
+  startedAt         DateTime  @default(now()) @map("started_at")
+  completedDays     Json      @default("[]") @map("completed_days") // array of day numbers, e.g. [1,2,3]
+  lastCompletedDate String?   @map("last_completed_date")           // YYYY-MM-DD, one check-in per day
+  finishedAt        DateTime? @map("finished_at")
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, challengeId])
+  @@map("challenge_enrollments")
+}
+
+// ─── Fasting Tracker ────────────────────────────────────────────
+model Fast {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  fastType  String    @map("fast_type") // 'water' | 'daniel' | 'partial' | 'full' | 'custom'
+  goalHours Int       @default(24) @map("goal_hours")
+  startedAt DateTime  @default(now()) @map("started_at")
+  endedAt   DateTime? @map("ended_at")
+  status    String    @default("active") // 'active' | 'completed' | 'broken'
+  notes     String?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("fasts")
+}
+
+// ─── Bible Reading Plan (admin-managed content + progress) ─────
+model ReadingPlan {
+  id            String   @id @default(uuid())
+  titleEn       String   @map("title_en")
+  titleFr       String?  @map("title_fr")
+  descriptionEn String?  @map("description_en")
+  durationDays  Int      @default(7) @map("duration_days")
+  days          Json     // [{ "day": 1, "referenceEn": "Genesis 1-3", "titleEn": "Creation" }, ...]
+  isActive      Boolean  @default(true) @map("is_active")
+  sortOrder     Int      @default(0) @map("sort_order")
+  createdAt     DateTime @default(now())
+
+  progress ReadingPlanProgress[]
+
+  @@map("reading_plans")
+}
+
+model ReadingPlanProgress {
+  id                String    @id @default(uuid())
+  userId            String    @map("user_id")
+  planId            String    @map("plan_id")
+  startedAt         DateTime  @default(now()) @map("started_at")
+  completedDays     Json      @default("[]") @map("completed_days")
+  lastCompletedDate String?   @map("last_completed_date")
+  finishedAt        DateTime? @map("finished_at")
+
+  user User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan ReadingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, planId])
+  @@map("reading_plan_progress")
+}
+
+// ─── Faith Milestones & Badges ─────────────────────────────────
+model Milestone {
+  id            String  @id @default(uuid())
+  key           String  @unique
+  titleEn       String  @map("title_en")
+  titleFr       String? @map("title_fr")
+  descriptionEn String? @map("description_en")
+  descriptionFr String? @map("description_fr")
+  icon          String  @default("emoji_events")
+  criteriaType  String  @map("criteria_type") // 'streak' | 'prayers_total' | 'goals_total' | 'journal_total' | 'fasts_total' | 'challenges_total' | 'reading_plans_total'
+  criteriaValue Int     @map("criteria_value")
+  sortOrder     Int     @default(0) @map("sort_order")
+  isActive      Boolean @default(true) @map("is_active")
+
+  achievedBy UserMilestone[]
+
+  @@map("milestones")
+}
+
+model UserMilestone {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  milestoneId String   @map("milestone_id")
+  achievedAt  DateTime @default(now()) @map("achieved_at")
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  milestone Milestone @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, milestoneId])
+  @@map("user_milestones")
+}
+
+// ─── Scripture Memory Cards ─────────────────────────────────────
+model MemoryCard {
+  id        String   @id @default(uuid())
+  referenceEn String @map("reference_en")
+  verseEn   String   @map("verse_en")
+  verseFr   String?  @map("verse_fr")
+  category  String   @default("general")
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now())
+
+  progress MemoryCardProgress[]
+
+  @@map("memory_cards")
+}
+
+model MemoryCardProgress {
+  id                String    @id @default(uuid())
+  userId            String    @map("user_id")
+  cardId            String    @map("card_id")
+  addedAt           DateTime  @default(now()) @map("added_at")
+  reviewCount       Int       @default(0) @map("review_count")
+  lastReviewedDate  String?   @map("last_reviewed_date")
+  quizAttempts      Int       @default(0) @map("quiz_attempts")
+  quizPassedAt      DateTime? @map("quiz_passed_at")
+  mastered          Boolean   @default(false)
+
+  user User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card MemoryCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cardId])
+  @@map("memory_card_progress")
+}
+
+// ─── Worship Mode (admin-managed playlist) ─────────────────────
+model WorshipTrack {
+  id            String   @id @default(uuid())
+  titleEn       String   @map("title_en")
+  artist        String?
+  platform      String   @default("youtube") // 'youtube' | 'spotify' | 'audio_url'
+  url           String
+  category      String   @default("worship") // 'praise' | 'worship' | 'instrumental'
+  durationLabel String?  @map("duration_label")
+  isActive      Boolean  @default(true) @map("is_active")
+  sortOrder     Int      @default(0) @map("sort_order")
+  createdAt     DateTime @default(now())
+
+  @@map("worship_tracks")
+}
+
+// ─── Weekly Spiritual Review ────────────────────────────────────
+model WeeklyReview {
+  id             String    @id @default(uuid())
+  userId         String    @map("user_id")
+  weekStartDate  String    @map("week_start_date") // YYYY-MM-DD (Monday of that week)
+  aiSummary      String?   @map("ai_summary")
+  userReflection String?   @map("user_reflection")
+  stats          Json?
+  generatedAt    DateTime? @map("generated_at")
+  createdAt      DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekStartDate])
+  @@map("weekly_reviews")
+}
+
+// ─── Prayer Chain ────────────────────────────────────────────
+model PrayerRequest {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  text        String
+  isAnonymous Boolean  @default(false) @map("is_anonymous")
+  category    String   @default("general")
+  status      String   @default("active") // 'active' | 'answered'
+  prayerCount Int      @default(0) @map("prayer_count")
+  groupId     String?  @map("group_id") // optional — set when posted inside a Prayer Group
+  createdAt   DateTime @default(now())
+
+  user  User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group PrayerGroup?        @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  prays PrayerRequestPray[]
+
+  @@map("prayer_requests")
+}
+
+model PrayerRequestPray {
+  id        String   @id @default(uuid())
+  requestId String   @map("request_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now())
+
+  request PrayerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, userId])
+  @@map("prayer_request_prays")
+}
+
+// ─── Testimony Feed ──────────────────────────────────────────
+model Testimony {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  title       String
+  content     String
+  isAnonymous Boolean  @default(false) @map("is_anonymous")
+  createdAt   DateTime @default(now())
+
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reactions TestimonyReaction[]
+
+  @@map("testimonies")
+}
+
+model TestimonyReaction {
+  id          String   @id @default(uuid())
+  testimonyId String   @map("testimony_id")
+  userId      String   @map("user_id")
+  createdAt   DateTime @default(now())
+
+  testimony Testimony @relation(fields: [testimonyId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([testimonyId, userId])
+  @@map("testimony_reactions")
+}
+
+// ─── Accountability Partner ──────────────────────────────────
+model AccountabilityInvite {
+  id         String    @id @default(uuid())
+  inviterId  String    @map("inviter_id")
+  inviteCode String    @unique @map("invite_code")
+  status     String    @default("pending") // 'pending' | 'accepted' | 'expired'
+  acceptedBy String?   @map("accepted_by")
+  createdAt  DateTime  @default(now())
+  acceptedAt DateTime? @map("accepted_at")
+
+  inviter User @relation(fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@map("accountability_invites")
+}
+
+model AccountabilityPartnership {
+  id        String   @id @default(uuid())
+  userAId   String   @map("user_a_id")
+  userBId   String   @map("user_b_id")
+  createdAt DateTime @default(now())
+
+  userA User @relation("PartnerA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB User @relation("PartnerB", fields: [userBId], references: [id], onDelete: Cascade)
+
+  @@unique([userAId, userBId])
+  @@map("accountability_partnerships")
+}
+
+model AccountabilityNudge {
+  id        String   @id @default(uuid())
+  fromUserId String  @map("from_user_id")
+  toUserId  String   @map("to_user_id")
+  message   String?
+  createdAt DateTime @default(now())
+
+  @@map("accountability_nudges")
+}
+
+// ─── Prayer Groups (Premium) ──────────────────────────────────
+model PrayerGroup {
+  id            String   @id @default(uuid())
+  name          String
+  description   String?
+  createdByUserId String @map("created_by_user_id")
+  isPublic      Boolean  @default(true) @map("is_public")
+  joinCode      String   @unique @map("join_code")
+  createdAt     DateTime @default(now())
+
+  members  PrayerGroupMembership[]
+  requests PrayerRequest[]
+
+  @@map("prayer_groups")
+}
+
+model PrayerGroupMembership {
+  id       String   @id @default(uuid())
+  groupId  String   @map("group_id")
+  userId   String   @map("user_id")
+  role     String   @default("member") // 'member' | 'admin'
+  joinedAt DateTime @default(now()) @map("joined_at")
+
+  group PrayerGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@map("prayer_group_memberships")
+}
+
+// ─── Spiritual Mentorship Matching (Premium) ─────────────────
+model MentorProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique @map("user_id")
+  bio         String?
+  focusAreas  String[] @default([]) @map("focus_areas")
+  isAvailable Boolean  @default(true) @map("is_available")
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("mentor_profiles")
+}
+
+model MentorshipMatch {
+  id            String    @id @default(uuid())
+  mentorUserId  String    @map("mentor_user_id")
+  menteeUserId  String    @map("mentee_user_id")
+  status        String    @default("pending") // 'pending' | 'active' | 'completed' | 'declined'
+  checkIns      Json      @default("[]") @map("check_ins") // [{date, note, byUserId}]
+  startedAt     DateTime? @map("started_at")
+  createdAt     DateTime  @default(now())
+
+  mentor User @relation("MentorMatches", fields: [mentorUserId], references: [id], onDelete: Cascade)
+  mentee User @relation("MenteeMatches", fields: [menteeUserId], references: [id], onDelete: Cascade)
+
+  @@unique([mentorUserId, menteeUserId])
+  @@map("mentorship_matches")
+}
+
+// ─── Seasonal Events ──────────────────────────────────────────
+model SeasonalEvent {
+  id            String   @id @default(uuid())
+  key           String   @unique
+  titleEn       String   @map("title_en")
+  titleFr       String?  @map("title_fr")
+  descriptionEn String?  @map("description_en")
+  icon          String   @default("celebration")
+  startDate     String   @map("start_date") // YYYY-MM-DD
+  endDate       String   @map("end_date")   // YYYY-MM-DD
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now())
+
+  @@map("seasonal_events")
 }
 
 // ─── Mental Health Content (admin-managed) ────────────────────
@@ -279,6 +658,7 @@ model JournalEntry {
   status      String   @default("active")
   language    String   @default("en")
   tags        String[] @default([])
+  aiInterpretation String? @map("ai_interpretation") // used by the AI Dream/Vision Journal feature
   createdDate String?  @map("created_date")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
