@@ -1,4 +1,4 @@
--- ReviveMe Database Migration
+-- ReviveSpring Database Migration
 -- Run this manually if you cannot use `npx prisma migrate dev`
 -- Compatible with PostgreSQL 14+
 

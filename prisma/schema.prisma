@@ -23,6 +23,9 @@ model User {
   testimony           String?
   language            String    @default("en")
   bibleVersion        String    @default("NIV") @map("bible_version")
+  fontFamily          String    @default("Inter") @map("font_family")
+  fontScale           Float     @default(1.0) @map("font_scale")
+  lastPurchaseToken   String?   @unique @map("last_purchase_token") // used to match Google Play RTDN events back to a user
   timezone            String    @default("UTC")        // for daily email timing
   registeredHour      Int       @default(8)            // legacy fallback hour
   reminderHour        Int       @default(9)  @map("reminder_hour")
@@ -50,6 +53,7 @@ model User {
   userMilestones UserMilestone[]
   memoryCardProgress MemoryCardProgress[]
   weeklyReviews WeeklyReview[]
+  challengeSuggestions ChallengeSuggestion[]
   prayerRequests PrayerRequest[]
   prayerRequestPrays PrayerRequestPray[]
   testimonies Testimony[]
@@ -373,6 +377,20 @@ model MemoryCardProgress {
 
   @@unique([userId, cardId])
   @@map("memory_card_progress")
+}
+
+// ─── User-Submitted Prayer Challenge Suggestions ─────────────
+model ChallengeSuggestion {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  text          String
+  status        String   @default("submitted") // 'submitted' | 'reviewed' | 'added'
+  supportTicketId String? @map("support_ticket_id")
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("challenge_suggestions")
 }
 
 // ─── Worship Mode (admin-managed playlist) ─────────────────────
