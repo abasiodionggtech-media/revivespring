@@ -24,11 +24,12 @@ const DEFAULT_SETTINGS = {
   ai_ad_daily_limit: '5',
   subscription_currency: 'USD',
   subscription_first_term_months: '3',
+  subscription_renewal_term_months: '1',
   subscription_first_term_discount_percent: '4',
   subscription_standard_price_usd: '9.25',
   subscription_premium_price_usd: '15.50',
-  subscription_google_play_standard_product_id: 'revivespring_standard_3mo',
-  subscription_google_play_premium_product_id: 'revivespring_premium_3mo',
+  subscription_google_play_standard_product_id: 'revivespring_standard',
+  subscription_google_play_premium_product_id: 'revivespring_premium',
   ad_banner_title_en: 'Grow with ReviveSpring Premium',
   ad_banner_title_fr: 'Grandissez avec ReviveSpring Premium',
   ad_banner_body_en: 'Remove ads, unlock premium features, and keep your prayer journey uninterrupted.',
@@ -260,9 +261,18 @@ router.post('/subscription/mobile-sync', async (req, res, next) => {
     // single monthly SKU) so existing purchasers aren't downgraded.
     const tier = productId === standardProductId ? 'standard' : 'premium';
 
-    const termMonths = Math.max(1, parseInt(settings.subscription_first_term_months || '3', 10) || 3);
-
     const currentSubscription = readUserMeta(req.user).subscription || {};
+    // The very first payment covers a 3-month intro period paid as a single
+    // upfront charge (a Google Play "single payment" offer on top of an
+    // otherwise-monthly base plan). Every payment after that is a normal
+    // monthly renewal at the regular price — the base plan itself is
+    // monthly, so nothing but the very first charge should ever add 3
+    // months at once.
+    const isFirstPayment = !currentSubscription.firstPaymentAt;
+    const termMonths = isFirstPayment
+      ? Math.max(1, parseInt(settings.subscription_first_term_months || '3', 10) || 3)
+      : Math.max(1, parseInt(settings.subscription_renewal_term_months || '1', 10) || 1);
+
     const rawPurchaseTime = Number(purchaseTime);
     const parsedPurchaseTime = new Date(
       Number.isFinite(rawPurchaseTime) && rawPurchaseTime > 0
@@ -295,16 +305,34 @@ router.post('/subscription/mobile-sync', async (req, res, next) => {
         durationDays: termMonths * 30,
         termMonths,
         expiresAt: expiresAt.toISOString(),
+        firstPaymentAt: currentSubscription.firstPaymentAt || normalizedPurchaseTime.toISOString(),
       },
     });
 
-    const updatedUser = await prisma.user.update({
-      where: { id: req.user.id },
-      data: {
-        subscriptionStatus: tier,
-        onboardingData: nextMeta,
-      },
-    });
+    let updatedUser;
+    try {
+      updatedUser = await prisma.user.update({
+        where: { id: req.user.id },
+        data: {
+          subscriptionStatus: tier,
+          onboardingData: nextMeta,
+          lastPurchaseToken: purchaseToken || undefined,
+        },
+      });
+    } catch (err) {
+      // Extremely unlikely (a purchase token colliding with another user's),
+      // but if it happens, don't let it block the subscription sync itself —
+      // just skip storing the token for RTDN lookup this time.
+      if (err.code === 'P2002') {
+        console.error('[MOBILE-SYNC] purchaseToken unique collision, skipping token store:', purchaseToken);
+        updatedUser = await prisma.user.update({
+          where: { id: req.user.id },
+          data: { subscriptionStatus: tier, onboardingData: nextMeta },
+        });
+      } else {
+        throw err;
+      }
+    }
 
     try {
       await sendSubscriptionConfirmationEmail(

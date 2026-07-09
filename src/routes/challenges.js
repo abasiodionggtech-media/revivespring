@@ -1,6 +1,8 @@
 'use strict';
 const express = require('express');
+const { body, validationResult } = require('express-validator');
 const prisma = require('../config/prisma');
+const { createSupportTicket } = require('../services/supportStorage');
 
 const router = express.Router();
 const today = () => new Date().toISOString().split('T')[0];
@@ -83,6 +85,59 @@ router.post('/:id/check-in', async (req, res, next) => {
       },
     });
     res.json(formatChallenge(challenge, updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/challenges/suggestions — the user's own submitted challenge ideas
+router.get('/suggestions', async (req, res, next) => {
+  try {
+    const suggestions = await prisma.challengeSuggestion.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(suggestions.map((s) => ({
+      id: s.id,
+      text: s.text,
+      status: s.status,
+      created_at: s.createdAt,
+    })));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/challenges/suggestions — { text } — submits a custom challenge
+// idea. Recorded on the user's own account for guidance, and forwarded to
+// the support team as a ticket so a real person sees it.
+router.post('/suggestions', [body('text').trim().notEmpty().isLength({ max: 800 })], async (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(422).json({ message: errors.array()[0].msg });
+  try {
+    const text = req.body.text.toString();
+    let ticketId = null;
+    try {
+      const ticket = await createSupportTicket({
+        user: req.user,
+        subject: 'Prayer Challenge Suggestion',
+        message: `Prayer challenge idea submitted from the app:\n\n"${text}"`,
+      });
+      ticketId = ticket?.id || null;
+    } catch (err) {
+      console.error('[CHALLENGE-SUGGESTION] Support ticket creation failed:', err.message);
+    }
+
+    const suggestion = await prisma.challengeSuggestion.create({
+      data: { userId: req.user.id, text, supportTicketId: ticketId },
+    });
+
+    res.status(201).json({
+      id: suggestion.id,
+      text: suggestion.text,
+      status: suggestion.status,
+      created_at: suggestion.createdAt,
+    });
   } catch (err) {
     next(err);
   }
