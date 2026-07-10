@@ -228,6 +228,7 @@ router.post(
       }
 
       if (!user) {
+        const otp = generateOtp();
         user = await prisma.user.create({
           data: {
             email,
@@ -236,13 +237,46 @@ router.post(
             authProvider: 'google',
             googleSub,
             profileImageUrl,
-            isEmailVerified: true,
+            isEmailVerified: false,
+            otpCode: otp,
+            otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
             language: req.body.language === 'fr' ? 'fr' : 'en',
           },
         });
         await prisma.analytics.create({ data: { userId: user.id } });
+
+        // New Google accounts still confirm their email once, the same way
+        // email/password sign-ups do — Google's own token already proves
+        // this address is real, but this keeps the verification step
+        // consistent everywhere in the app rather than only for one
+        // sign-in method.
+        if (!await deliverOtp(res, email, otp, user.language)) return;
+        return res.status(201).json({
+          message: 'Account created. Please verify your email.',
+          requiresVerification: true,
+          email,
+          verifyUrl: verificationLink(email),
+        });
       } else if (user.googleSub && googleSub && user.googleSub !== googleSub) {
         return res.status(409).json({ message: 'This Google account does not match the existing profile.' });
+      } else if (!user.isEmailVerified) {
+        // Existing account that was never verified (e.g. created before
+        // this check existed) — same resend-and-verify flow as login.
+        const otp = generateOtp();
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            otpCode: otp,
+            otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+          },
+        });
+        if (!await deliverOtp(res, email, otp, user.language)) return;
+        return res.status(403).json({
+          message: 'Email not verified. A verification code has been sent.',
+          requiresVerification: true,
+          email,
+          verifyUrl: verificationLink(email),
+        });
       } else {
         user = await prisma.user.update({
           where: { id: user.id },

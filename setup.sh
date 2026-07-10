@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# ReviveMe Backend — Quick Start Script
+# ReviveSpring Backend — Quick Start Script
 # Usage: chmod +x setup.sh && ./setup.sh
 # ─────────────────────────────────────────────────────────────────────────────
 set -e
 
 echo ""
-echo "✝  ReviveMe Backend Setup"
+echo "✝  ReviveSpring Backend Setup"
 echo "─────────────────────────────────────────"
 
 # 1. Check Node.js

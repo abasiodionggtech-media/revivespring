@@ -1,7 +1,7 @@
 {
   "name": "reviveme-backend",
   "version": "1.0.0",
-  "description": "ReviveMe Node.js REST API",
+  "description": "ReviveSpring Node.js REST API",
   "main": "src/index.js",
   "scripts": {
     "start": "node scripts/migrate.js && node src/index.js",

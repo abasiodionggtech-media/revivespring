@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path      = require('path');
 const express  = require('express');
 const { v4: uuidv4 } = require('uuid');
 const cors     = require('cors');
@@ -42,6 +43,7 @@ const prayerGroupsRoutes = require('./routes/prayerGroups');
 const mentorshipRoutes = require('./routes/mentorship');
 const seasonalEventsRoutes = require('./routes/seasonalEvents');
 const googlePlayWebhookRoutes = require('./routes/googlePlayWebhook');
+const seedDatabase = require('./config/seed');
 const { authenticate }      = require('./middleware/auth');
 const { authenticateAdmin } = require('./middleware/adminAuth');
 const prisma = require('./config/prisma');
@@ -72,7 +74,7 @@ app.use(helmet());
 
 const allowedOriginsList = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
-  .map((origin) => origin.trim())
+  .map((origin) => origin.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 
 if (allowedOriginsList.length === 0) {
@@ -86,7 +88,8 @@ app.use(cors({
     // always allowed through — CORS only ever applies to browsers anyway.
     if (!origin) return callback(null, true);
     if (allowedOriginsList.length === 0) return callback(null, true);
-    if (allowedOriginsList.includes(origin)) return callback(null, true);
+    const normalizedOrigin = origin.replace(/\/+$/, '');
+    if (allowedOriginsList.includes(normalizedOrigin)) return callback(null, true);
     console.warn(`[CORS] Blocked request from disallowed origin: ${origin}`);
     const corsError = new Error('Not allowed by CORS');
     corsError.status = 403;
@@ -108,6 +111,13 @@ app.use('/api', limiter);
 const authLimiter = rateLimit({ windowMs: 15*60*1000, max: 30, message: { message: 'Too many auth attempts.' } });
 
 app.use(express.json({ limit: '2mb' }));
+
+// Static media (e.g. the onboarding intro video). express.static handles
+// HTTP Range requests automatically, which is what lets the mobile app
+// pause/resume a large download instead of restarting it from zero.
+app.use('/media', express.static(path.join(__dirname, '..', 'public', 'media'), {
+  maxAge: '7d',
+}));
 app.use(express.urlencoded({ extended: true }));
 if (process.env.NODE_ENV !== 'test') app.use(morgan('dev'));
 
@@ -179,6 +189,13 @@ app.use((err, req, res, _next) => {
     console.log('✅ Prisma connected.');
   } catch (err) {
     console.error('[DB] Connect error:', err.message);
+  }
+
+  try {
+    await seedDatabase();
+    console.log('✅ Database content check/seed complete.');
+  } catch (err) {
+    console.error('[SEED] Startup seeding failed:', err.message);
   }
 
   try {

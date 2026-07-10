@@ -1,5 +1,7 @@
 'use strict';
 const express = require('express');
+const path = require('path');
+const fs = require('fs').promises;
 const prisma  = require('../config/prisma');
 
 const router = express.Router();
@@ -52,6 +54,28 @@ router.get('/random', async (req, res, next) => {
     }
     const verse = verses[Math.floor(Math.random() * verses.length)];
     res.json(formatVerse(verse, req.user.bibleVersion));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/daily-verse/backgrounds — lists whatever looping background
+// videos are currently in public/media/verse-backgrounds/, so new ones can
+// be added or swapped just by changing that folder — no code change needed.
+router.get('/backgrounds', async (req, res, next) => {
+  try {
+    const dir = path.join(__dirname, '..', '..', 'public', 'media', 'verse-backgrounds');
+    let files = [];
+    try {
+      files = await fs.readdir(dir);
+    } catch (_err) {
+      files = [];
+    }
+    const videos = files.filter((name) => /\.(mp4|webm|mov)$/i.test(name));
+    res.json(videos.map((name) => ({
+      name,
+      url: `/media/verse-backgrounds/${encodeURIComponent(name)}`,
+    })));
   } catch (err) {
     next(err);
   }
