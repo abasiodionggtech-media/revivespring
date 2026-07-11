@@ -5,6 +5,20 @@ const prisma = require('../config/prisma');
 async function seed() {
   console.log('🌱  Seeding ReviveSpring database...');
 
+  // Runs a named seed section in isolation — if one section throws (e.g. a
+  // schema mismatch on a recently-added table), it's logged and skipped
+  // rather than aborting the entire seed and leaving later sections (like
+  // verses, reading plans, memory cards) never inserted.
+  const section = async (name, fn) => {
+    try {
+      await fn();
+    } catch (err) {
+      console.error(`  ✗ Seed section "${name}" failed (skipped):`, err.message);
+    }
+  };
+  seed._section = section;
+
+  await section('demo user & sample data', async () => {
   // ─── Demo User ───────────────────────────────────────────────────────────────
   const passwordHash = await bcrypt.hash('password123', 12);
 
@@ -131,6 +145,7 @@ async function seed() {
     if (!exists) await prisma.dailyGoalTemplate.create({ data: template });
   }
   console.log('  ✓ Daily goal templates seeded');
+  });
 
   const verses = [
     {
@@ -701,16 +716,18 @@ async function seed() {
       reference: '1 John 1:9',
     },
   ];
-  for (const item of verses) {
-    const exists = await prisma.dailyVerse.findFirst({ where: { reference: item.reference } });
-    if (!exists) {
-      await prisma.dailyVerse.create({ data: item });
-    } else if (!exists.verseKjv || !exists.verseNlt || !exists.verseEsv) {
-      // Backfill translation fields for verses seeded before multi-version support existed.
-      await prisma.dailyVerse.update({ where: { id: exists.id }, data: item });
+  await section('daily verses', async () => {
+    for (const item of verses) {
+      const exists = await prisma.dailyVerse.findFirst({ where: { reference: item.reference } });
+      if (!exists) {
+        await prisma.dailyVerse.create({ data: item });
+      } else if (!exists.verseKjv || !exists.verseNlt || !exists.verseEsv) {
+        // Backfill translation fields for verses seeded before multi-version support existed.
+        await prisma.dailyVerse.update({ where: { id: exists.id }, data: item });
+      }
     }
-  }
-  console.log('  ✓ Daily verses seeded');
+    console.log('  ✓ Daily verses seeded');
+  });
 
   const library = [
     { category:'morning', titleEn:'Morning Renewal', prayerEn:'Lord, align my heart with peace, wisdom, and courage today.', verseEn:'This is the day the Lord has made.', verseRef:'Psalm 118:24' },
@@ -749,11 +766,13 @@ async function seed() {
     { titleEn: '10 Days of Breakthrough', descriptionEn: 'Ten days of bold, persistent prayer for a specific breakthrough you are believing for.', durationDays: 10, category: 'breakthrough', sortOrder: 5 },
     { titleEn: '5 Days of Rest', descriptionEn: 'A short reset for the weary — five days of prayer centered on rest and God\'s peace.', durationDays: 5, category: 'rest', sortOrder: 6 },
   ];
-  for (const item of challenges) {
-    const exists = await prisma.challenge.findFirst({ where: { titleEn: item.titleEn } });
-    if (!exists) await prisma.challenge.create({ data: item });
-  }
-  console.log('  ✓ Prayer challenges seeded');
+  await section('prayer challenges', async () => {
+    for (const item of challenges) {
+      const exists = await prisma.challenge.findFirst({ where: { titleEn: item.titleEn } });
+      if (!exists) await prisma.challenge.create({ data: item });
+    }
+    console.log('  ✓ Prayer challenges seeded');
+  });
 
   const readingPlans = [
     {
@@ -817,11 +836,13 @@ async function seed() {
       sortOrder: 3,
     },
   ];
-  for (const item of readingPlans) {
-    const exists = await prisma.readingPlan.findFirst({ where: { titleEn: item.titleEn } });
-    if (!exists) await prisma.readingPlan.create({ data: item });
-  }
-  console.log('  ✓ Bible reading plans seeded');
+  await section('reading plans', async () => {
+    for (const item of readingPlans) {
+      const exists = await prisma.readingPlan.findFirst({ where: { titleEn: item.titleEn } });
+      if (!exists) await prisma.readingPlan.create({ data: item });
+    }
+    console.log('  ✓ Bible reading plans seeded');
+  });
 
   const milestones = [
     { key: 'first_prayer', titleEn: 'First Prayer', descriptionEn: 'Completed your first prayer.', icon: 'favorite', criteriaType: 'prayers_total', criteriaValue: 1, sortOrder: 0 },
@@ -886,11 +907,13 @@ async function seed() {
     { referenceEn: 'Psalm 90:12', verseEn: 'Teach us to number our days, that we may gain a heart of wisdom.', category: 'wisdom', sortOrder: 41 },
     { referenceEn: 'Revelation 21:4', verseEn: 'He will wipe every tear from their eyes. There will be no more death or mourning or crying or pain, for the old order of things has passed away.', category: 'comfort', sortOrder: 42 },
   ];
-  for (const item of memoryCards) {
-    const exists = await prisma.memoryCard.findFirst({ where: { referenceEn: item.referenceEn } });
-    if (!exists) await prisma.memoryCard.create({ data: item });
-  }
-  console.log('  ✓ Scripture memory cards seeded');
+  await section('memory cards', async () => {
+    for (const item of memoryCards) {
+      const exists = await prisma.memoryCard.findFirst({ where: { referenceEn: item.referenceEn } });
+      if (!exists) await prisma.memoryCard.create({ data: item });
+    }
+    console.log('  ✓ Scripture memory cards seeded');
+  });
 
   const worshipTracks = [
     { titleEn: 'Way Maker', artist: 'Sinach', platform: 'youtube', url: 'https://www.youtube.com/watch?v=m0I3GzZjxJM', category: 'praise', durationLabel: '5:32', sortOrder: 0 },
