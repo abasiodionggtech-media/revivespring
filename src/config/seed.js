@@ -699,7 +699,7 @@ async function seed() {
       verseNlt: 'But if we confess our sins to him, he is faithful and just to forgive us our sins and to cleanse us from all wickedness.',
       verseEsv: 'If we confess our sins, he is faithful and just to forgive us our sins and to cleanse us from all unrighteousness.',
       reference: '1 John 1:9',
-    }
+    },
   ];
   for (const item of verses) {
     const exists = await prisma.dailyVerse.findFirst({ where: { reference: item.reference } });
