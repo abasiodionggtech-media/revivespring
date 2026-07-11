@@ -90,6 +90,18 @@ async function loadSettings() {
   rows.forEach((row) => {
     settings[row.key] = row.value;
   });
+  // Self-heal: earlier versions used product IDs with a "_3mo" suffix that
+  // no longer exists in Play Console (the 3-month term is now an offer, not
+  // a separate product). If a stale value like that is still saved in the
+  // DB, force it back to the correct current ID so the mobile app can find
+  // the product. Without this, a leftover DB row would silently override
+  // the correct code default and break purchases.
+  if (String(settings.subscription_google_play_standard_product_id).includes('_3mo')) {
+    settings.subscription_google_play_standard_product_id = 'revivespring_standard';
+  }
+  if (String(settings.subscription_google_play_premium_product_id).includes('_3mo')) {
+    settings.subscription_google_play_premium_product_id = 'revivespring_premium';
+  }
   return settings;
 }
 
