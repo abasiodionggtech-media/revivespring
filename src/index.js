@@ -43,6 +43,7 @@ const prayerGroupsRoutes = require('./routes/prayerGroups');
 const mentorshipRoutes = require('./routes/mentorship');
 const seasonalEventsRoutes = require('./routes/seasonalEvents');
 const googlePlayWebhookRoutes = require('./routes/googlePlayWebhook');
+const bibleRoutes = require('./routes/bible');
 const seedDatabase = require('./config/seed');
 const { authenticate }      = require('./middleware/auth');
 const { authenticateAdmin } = require('./middleware/adminAuth');
@@ -166,6 +167,11 @@ app.use('/api/seasonal-events', authenticate, seasonalEventsRoutes);
 // logged-in user. It verifies itself via the ?token= query param instead
 // (see GOOGLE_PLAY_WEBHOOK_SECRET / src/routes/googlePlayWebhook.js).
 app.use('/api/webhooks', googlePlayWebhookRoutes);
+
+// Bible reading is deliberately FREE and open — no `authenticate`, no plan
+// check. The KJV text is public domain, it costs nothing to serve, and
+// Scripture behind a paywall would be a strange thing for this app to do.
+app.use('/api/bible', bibleRoutes);
 app.use('/api/admin',     adminRoutes);
 
 // 404

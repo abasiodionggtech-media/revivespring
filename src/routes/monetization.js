@@ -5,7 +5,9 @@ const express = require('express');
 const prisma = require('../config/prisma');
 const { authenticate } = require('../middleware/auth');
 const {
-  aiAdViewsForToday,
+  trialStatus,
+  aiMessagesThisMonth,
+  startOfNextMonth,
   aiUsageForToday,
   effectivePlan,
   isPremiumUser,
@@ -18,30 +20,16 @@ const { sendSubscriptionConfirmationEmail } = require('../services/email');
 const router = express.Router();
 
 const DEFAULT_SETTINGS = {
-  ads_enabled: 'true',
-  ads_banner_enabled: 'true',
-  ai_ad_unlock_enabled: 'true',
-  ai_ad_daily_limit: '5',
   subscription_currency: 'USD',
   subscription_first_term_months: '3',
   subscription_renewal_term_months: '1',
   subscription_first_term_discount_percent: '4',
   subscription_standard_price_usd: '9.25',
   subscription_premium_price_usd: '15.50',
+  trial_days: '3',
+  standard_ai_messages_per_month: '20',
   subscription_google_play_standard_product_id: 'revivespring_standard',
   subscription_google_play_premium_product_id: 'revivespring_premium',
-  ad_banner_title_en: 'Grow with ReviveSpring Premium',
-  ad_banner_title_fr: 'Grandissez avec ReviveSpring Premium',
-  ad_banner_body_en: 'Remove ads, unlock premium features, and keep your prayer journey uninterrupted.',
-  ad_banner_body_fr: 'Retirez les publicites, debloquez les fonctions premium et gardez un parcours de priere sans interruption.',
-  ad_banner_cta_en: 'Upgrade on Android',
-  ad_banner_cta_fr: 'Passer premium sur Android',
-  ai_ad_title_en: 'Watch this short ad to use AI',
-  ai_ad_title_fr: 'Regardez cette courte pub pour utiliser l IA',
-  ai_ad_body_en: 'Free users can unlock one AI conversation by viewing a short sponsor message. Limit: 5 per day.',
-  ai_ad_body_fr: 'Les utilisateurs gratuits peuvent debloquer une conversation IA en regardant un court message sponsorise. Limite : 5 par jour.',
-  ai_ad_cta_en: 'Continue to AI',
-  ai_ad_cta_fr: 'Continuer vers l IA',
 };
 
 function safeMonetizationUser(user) {
@@ -150,47 +138,39 @@ function buildPlans(settings) {
 }
 
 function buildStatus(user, settings) {
-  const usage = aiUsageForToday(user);
-  const adViews = aiAdViewsForToday(user);
-  const maxDailyUses = Math.max(0, parseInt(settings.ai_ad_daily_limit || '5', 10) || 5);
+  const plan = effectivePlan(user);
   const premium = isPremiumUser(user);
   const paid = isPaidUser(user);
-  const remainingToday = premium ? maxDailyUses : Math.max(0, maxDailyUses - adViews.used);
+  const trial = trialStatus(user, settings);
+
+  // Premium: unlimited AI. Standard: a fixed monthly allowance that does NOT
+  // roll over — each calendar month starts fresh at the full number.
+  const monthlyAllowance = Math.max(0, parseInt(settings.standard_ai_messages_per_month || '20', 10) || 20);
+  const usedThisMonth = aiMessagesThisMonth(user);
+  const unlimited = premium || trial.active;
+  const remaining = unlimited
+    ? null
+    : (plan === 'standard' ? Math.max(0, monthlyAllowance - usedThisMonth) : 0);
 
   return {
-    plan: effectivePlan(user),
+    plan,
     isPremium: premium,
     isPaid: paid,
     isAdmin: user.role === 'admin',
     plans: buildPlans(settings),
-    ads: {
-      enabled: toBool(settings.ads_enabled, true),
-      bannerEnabled: toBool(settings.ads_banner_enabled, true),
-      aiUnlockEnabled: toBool(settings.ai_ad_unlock_enabled, true),
-      banner: {
-        titleEn: settings.ad_banner_title_en,
-        titleFr: settings.ad_banner_title_fr,
-        bodyEn: settings.ad_banner_body_en,
-        bodyFr: settings.ad_banner_body_fr,
-        ctaEn: settings.ad_banner_cta_en,
-        ctaFr: settings.ad_banner_cta_fr,
-      },
-      aiGate: {
-        titleEn: settings.ai_ad_title_en,
-        titleFr: settings.ai_ad_title_fr,
-        bodyEn: settings.ai_ad_body_en,
-        bodyFr: settings.ai_ad_body_fr,
-        ctaEn: settings.ai_ad_cta_en,
-        ctaFr: settings.ai_ad_cta_fr,
-      },
+    trial: {
+      active: trial.active,
+      daysLeft: trial.daysLeft,
+      endsAt: trial.endsAt,
+      used: trial.used,
     },
     ai: {
-      maxDailyUses,
-      usedToday: premium ? 0 : adViews.used,
-      adViewsToday: premium ? 0 : adViews.used,
-      conversationsToday: premium ? 0 : usage.used,
-      remainingToday,
-      requiresAdUnlock: !premium && toBool(settings.ai_ad_unlock_enabled, true),
+      unlimited,
+      monthlyAllowance,
+      usedThisMonth,
+      remainingThisMonth: remaining,
+      // no rollover, so this is always the 1st of next month
+      resetsAt: startOfNextMonth().toISOString(),
     },
   };
 }
@@ -206,52 +186,6 @@ router.get('/status', async (req, res, next) => {
   }
 });
 
-router.post('/ai/unlock', async (req, res, next) => {
-  try {
-    const settings = await loadSettings();
-    if (!toBool(settings.ads_enabled, true) || !toBool(settings.ai_ad_unlock_enabled, true)) {
-      return res.status(403).json({ message: 'AI ad unlock is currently disabled.' });
-    }
-
-    if (isPremiumUser(req.user)) {
-      return res.json({ unlockToken: null, ...buildStatus(req.user, settings).ai });
-    }
-
-    const usage = aiUsageForToday(req.user);
-    const adViews = aiAdViewsForToday(req.user);
-    const maxDailyUses = Math.max(0, parseInt(settings.ai_ad_daily_limit || '5', 10) || 5);
-    if (adViews.used >= maxDailyUses) {
-      return res.status(403).json({
-        message: 'Daily AI limit reached for free users.',
-        code: 'AI_DAILY_LIMIT_REACHED',
-        ...buildStatus(req.user, settings).ai,
-      });
-    }
-
-    const unlockToken = crypto.randomBytes(24).toString('hex');
-    const nextMeta = mergeUserMeta(req.user, {
-      aiAdViews: { date: adViews.date, used: adViews.used + 1 },
-      aiUnlock: {
-        token: unlockToken,
-        date: adViews.date,
-        grantedAt: new Date().toISOString(),
-        adViewNumber: adViews.used + 1,
-      },
-    });
-    const updatedUser = await prisma.user.update({
-      where: { id: req.user.id },
-      data: { onboardingData: nextMeta },
-    });
-    res.json({
-      unlockToken,
-      adViewsToday: adViews.used + 1,
-      conversationsToday: usage.used,
-      ...buildStatus(updatedUser, settings).ai,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
 
 router.post('/subscription/mobile-sync', async (req, res, next) => {
   try {

@@ -14,7 +14,7 @@ function validate(req, res) {
 function mapGoal(goal) {
   return {
     id: goal.id, text: goal.text, kind: goal.kind, content: goal.content,
-    duration_seconds: goal.durationSeconds, completed: goal.completed,
+    duration_seconds: goal.durationSeconds, completed: goal.completed, note: goal.note,
     completed_at: goal.completedAt, date: goal.date, language: goal.language,
   };
 }
@@ -65,8 +65,15 @@ router.post('/:id/complete', [body('elapsed_seconds').isInt({ min: 0 })], async 
     if (req.body.elapsed_seconds < existing.durationSeconds) {
       return res.status(422).json({ message: `Keep this activity open for ${existing.durationSeconds} seconds before completing it.` });
     }
+    // Keep what they wrote, if the goal asked them to write something.
+    const note = typeof req.body.note === 'string' ? req.body.note.trim() : '';
     const goal = await prisma.dailyGoal.update({
-      where: { id: existing.id }, data: { completed: true, completedAt: new Date() },
+      where: { id: existing.id },
+      data: {
+        completed: true,
+        completedAt: new Date(),
+        ...(note ? { note: note.slice(0, 2000) } : {}),
+      },
     });
     await updateStreak(req.user.id, goal.date);
     res.json(mapGoal(goal));

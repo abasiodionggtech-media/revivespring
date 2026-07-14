@@ -14,7 +14,13 @@
 const express = require('express');
 const prisma = require('../config/prisma');
 const { openAIRequest, extractReply } = require('../services/openaiClient');
-const { isPremiumUser } = require('../services/monetization');
+const {
+  isPremiumUser,
+  canUseAi,
+  recordAiMessage,
+  mergeUserMeta,
+} = require('../services/monetization');
+const appSettings = require('../services/appSettings');
 
 const router = express.Router();
 
@@ -106,8 +112,12 @@ async function saveConversation(sessionId, language, userEmail, message, replyTe
 
 router.get('/history', async (req, res, next) => {
   try {
-    if (!isPremiumUser(req.user)) {
-      return res.status(403).json({ message: 'AI Spiritual Companion is a Premium feature.', code: 'PREMIUM_REQUIRED' });
+    const settings = await appSettings.load();
+    const access = canUseAi(req.user, settings);
+    // Standard users who've spent their allowance can still READ their history —
+    // only sending a new message is blocked.
+    if (!access.allowed && !access.unlimited && access.allowance === 0) {
+      return res.status(403).json({ message: 'AI Companion requires a subscription.', code: 'SUBSCRIPTION_REQUIRED' });
     }
     const sessionId = companionSessionId(req.user.id);
     const messages = await loadHistory(sessionId);
@@ -118,8 +128,26 @@ router.get('/history', async (req, res, next) => {
 router.post('/chat', async (req, res, next) => {
   const language = (req.body && req.body.language ? req.body.language : req.user.language || 'en').toString();
   try {
-    if (!isPremiumUser(req.user)) {
-      return res.status(403).json({ message: 'AI Spiritual Companion is a Premium feature.', code: 'PREMIUM_REQUIRED' });
+    const settings = await appSettings.load();
+    const access = canUseAi(req.user, settings);
+
+    if (!access.allowed) {
+      // Distinguish "you have no plan" from "you've used up this month's 20" —
+      // they need different messages in the app.
+      if (access.allowance > 0) {
+        return res.status(429).json({
+          message: `You've used all ${access.allowance} AI messages for this month. Your allowance resets on the 1st, or upgrade to Premium for unlimited messages.`,
+          code: 'AI_MONTHLY_LIMIT_REACHED',
+          used: access.used,
+          allowance: access.allowance,
+          remaining: 0,
+          resetsAt: access.resetsAt,
+        });
+      }
+      return res.status(403).json({
+        message: 'AI Companion requires a subscription.',
+        code: 'SUBSCRIPTION_REQUIRED',
+      });
     }
 
     const message = (req.body.message || '').trim();
@@ -145,7 +173,32 @@ router.post('/chat', async (req, res, next) => {
     );
 
     await saveConversation(sessionId, language, req.user.email, message, replyText);
-    res.json({ reply: replyText, sessionId });
+
+    // Count this message against the monthly allowance — but only for the tiers
+    // that actually have one. Premium, admins and trial users are unlimited, so
+    // there's nothing to decrement.
+    let remaining = null;
+    if (!access.unlimited) {
+      try {
+        const nextMeta = mergeUserMeta(req.user, recordAiMessage(req.user));
+        await prisma.user.update({
+          where: { id: req.user.id },
+          data: { onboardingData: nextMeta },
+        });
+        remaining = Math.max(0, access.allowance - (access.used + 1));
+      } catch (err) {
+        // Never fail the reply just because the counter didn't save — the person
+        // asked a question and deserves an answer.
+        console.error('[AI-COMPANION] usage record failed:', err.message);
+      }
+    }
+
+    res.json({
+      reply: replyText,
+      sessionId,
+      unlimited: !!access.unlimited,
+      remainingThisMonth: remaining,
+    });
   } catch (err) {
     console.error('[AI-COMPANION] Error:', err.message);
     const status = err.status || 500;

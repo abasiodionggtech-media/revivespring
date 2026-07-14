@@ -1,0 +1,50 @@
+BIBLE TEXT FILES.
+
+✅ ALREADY HERE AND VERIFIED:
+     kjv.txt   — King James Version, all 31,102 verses, all 66 books.
+                 Parsed and checked: verse counts match the known KJV totals
+                 exactly (Genesis 1533, Psalms 2461, 3 John 14, Jude 25...).
+                 Public domain. This is the FREE translation.
+
+TO IMPORT IT (run once, from the backend folder):
+
+     node scripts/import-bible.js KJV data/bible/kjv.txt
+
+  You can run this locally, or from the Render shell against the live
+  database. The verses live in Postgres — the app never reads this .txt
+  file at runtime.
+
+  Expect it to print:
+     Parsed 31102 verses (0 lines skipped)
+     KJV: 31102 verses across 66 books
+
+  Safe to re-run: it replaces only KJV and leaves other translations alone.
+
+
+⚠️  A NOTE ON THE OTHER FILES YOU SENT
+
+  The "truth" zip (asv.txt / kjv.txt / bishops.txt) ships with a readme
+  saying the files are shareable "for NON-COMMERCIAL purposes."
+
+  ReviveSpring charges subscriptions, so it is a commercial app. I have
+  therefore NOT imported those files.
+
+  This is about the packaging of those particular exports, not the texts
+  themselves — the ASV (1901) and Bishops' Bible (1568) are genuinely public
+  domain. If you want them, download them from a source without that
+  restriction, e.g.:
+
+     asv.txt  <- https://openbible.com/textfiles/asv.txt
+     bsb.txt  <- https://bereanbible.com/bsb.txt   (Berean Standard, CC0)
+     brb.txt  <- https://readersbible.com/brb.txt  (Berean Reader's, CC0)
+
+  Then import each one the same way:
+
+     node scripts/import-bible.js ASV data/bible/asv.txt
+     node scripts/import-bible.js BSB data/bible/bsb.txt
+
+  The parser already handles every format these files come in.
+
+
+NOTE ON REPO SIZE: kjv.txt is ~4.5MB. If you'd rather not commit it, delete
+it after importing once — the app doesn't need it at runtime.
