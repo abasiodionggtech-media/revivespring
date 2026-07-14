@@ -117,3 +117,23 @@ CREATE TABLE IF NOT EXISTS "weekly_reviews" (
 
 CREATE UNIQUE INDEX IF NOT EXISTS "weekly_reviews_user_id_week_start_date_key"
 ON "weekly_reviews"("user_id", "week_start_date");
+
+-- The written note for reflection/gratitude goals.
+ALTER TABLE "daily_goals"
+  ADD COLUMN IF NOT EXISTS "note" TEXT;
+
+-- Full Bible text (public domain). Created here as a safety net in case
+-- `prisma db push` doesn't apply it — the same failure that cost us days.
+CREATE TABLE IF NOT EXISTS "bible_verses" (
+  "id" TEXT PRIMARY KEY,
+  "translation" TEXT NOT NULL,
+  "book" TEXT NOT NULL,
+  "book_order" INTEGER NOT NULL,
+  "chapter" INTEGER NOT NULL,
+  "verse" INTEGER NOT NULL,
+  "text" TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "bible_verses_translation_book_chapter_verse_key"
+  ON "bible_verses"("translation", "book", "chapter", "verse");
+CREATE INDEX IF NOT EXISTS "bible_verses_translation_book_order_chapter_verse_idx"
+  ON "bible_verses"("translation", "book_order", "chapter", "verse");
