@@ -198,6 +198,24 @@ model DailyGoalTemplate {
 }
 
 // ─── Daily Verse (admin-managed) ──────────────────────────────
+// ─── Full Bible text (public-domain translations only) ──────────────────────
+// One row per verse, per translation. ~31,102 rows per translation.
+// Imported from the plain-text files via `node scripts/import-bible.js`.
+model BibleVerse {
+  id          String @id @default(uuid())
+  translation String                              // "KJV", "BSB", "ASV", ...
+  book        String                              // canonical name, e.g. "Genesis"
+  bookOrder   Int    @map("book_order")           // 1-66, so we can sort properly
+  chapter     Int
+  verse       Int
+  text        String
+
+  // The lookup the reader actually does: "give me this chapter, in order".
+  @@unique([translation, book, chapter, verse])
+  @@index([translation, bookOrder, chapter, verse])
+  @@map("bible_verses")
+}
+
 model DailyVerse {
   id        String   @id @default(uuid())
   verseEn   String   @map("verse_en")               // NIV wording (default translation)
@@ -697,6 +715,9 @@ model DailyGoal {
   durationSeconds Int      @default(10) @map("duration_seconds")
   completed       Boolean  @default(false)
   completedAt     DateTime? @map("completed_at")
+  // What the person actually wrote when the goal asked them to write something
+  // (gratitude notes, reflections). Null for goals that don't ask for writing.
+  note            String?
   date            String
   language        String   @default("en")
   createdAt       DateTime @default(now())
